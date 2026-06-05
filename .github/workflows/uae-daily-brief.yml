@@ -31,10 +31,30 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      - name: Install Arabic rendering system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libraqm-dev \
+            libfribidi-dev \
+            libharfbuzz-dev \
+            libfreetype6-dev \
+            libjpeg-dev \
+            zlib1g-dev \
+            libpng-dev \
+            fonts-noto-core \
+            fonts-noto-extra
+
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install --force-reinstall --no-binary=Pillow "Pillow>=10.4.0"
           python -m pip install -r requirements.txt
+
+      - name: Verify Arabic rendering support
+        run: |
+          python -c "from PIL import features; assert features.check('raqm'), 'Pillow RAQM support is missing'"
 
       - name: Verify Telegram secrets
         run: |

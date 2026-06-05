@@ -19,7 +19,7 @@ import requests
 from bs4 import BeautifulSoup
 from bidi.algorithm import get_display
 from googlenewsdecoder import GoogleDecoder
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, features
 from pypdf import PdfReader, PdfWriter
 from pypdf.annotations import Link
 
@@ -34,6 +34,8 @@ BRIEFS_DIR = PROJECT_DIR / "briefs"
 LATEST_OUTPUT_PATH = PROJECT_DIR / "uae_daily_brief.pdf"
 OUTPUT_PATH = LATEST_OUTPUT_PATH
 FONT_DIR = PROJECT_DIR / "assets" / "fonts"
+RAQM_AVAILABLE = features.check("raqm")
+FONT_LAYOUT_ENGINE = getattr(getattr(ImageFont, "Layout", object), "RAQM", None) if RAQM_AVAILABLE else None
 
 IMAGE_WIDTH = 1080
 IMAGE_HEIGHT = 1600
@@ -1136,6 +1138,8 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
         path = FONT_DIR / candidate
         if path.exists():
             try:
+                if FONT_LAYOUT_ENGINE is not None:
+                    return ImageFont.truetype(str(path), size, layout_engine=FONT_LAYOUT_ENGINE)
                 return ImageFont.truetype(str(path), size)
             except OSError:
                 continue
@@ -1143,6 +1147,8 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
     candidates = ["tahomabd.ttf", "arialbd.ttf", "segoeuib.ttf"] if bold else ["tahoma.ttf", "arial.ttf", "segoeui.ttf"]
     for candidate in candidates:
         try:
+            if FONT_LAYOUT_ENGINE is not None:
+                return ImageFont.truetype(font_path(candidate), size, layout_engine=FONT_LAYOUT_ENGINE)
             return ImageFont.truetype(font_path(candidate), size)
         except OSError:
             continue
@@ -1151,9 +1157,15 @@ def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
 
 def visual_text(text: str) -> str:
     text = clean_text(text)
-    if not has_arabic(text):
-        return text
-    return get_display(arabic_reshaper.reshape(text))
+    if has_arabic(text) and not RAQM_AVAILABLE:
+        return get_display(arabic_reshaper.reshape(text))
+    return text
+
+
+def text_render_options(text: str) -> dict[str, str]:
+    if has_arabic(text) and RAQM_AVAILABLE:
+        return {"direction": "rtl", "language": "ar"}
+    return {}
 
 
 def draw_text(
@@ -1164,11 +1176,20 @@ def draw_text(
     fill: tuple[int, int, int],
     anchor: str = "la",
 ) -> None:
-    draw.text(xy, visual_text(text), fill=fill, font=font, anchor=anchor)
+    prepared_text = visual_text(text)
+    draw.text(
+        xy,
+        prepared_text,
+        fill=fill,
+        font=font,
+        anchor=anchor,
+        **text_render_options(prepared_text),
+    )
 
 
 def text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
-    bbox = draw.textbbox((0, 0), visual_text(text), font=font)
+    prepared_text = visual_text(text)
+    bbox = draw.textbbox((0, 0), prepared_text, font=font, **text_render_options(prepared_text))
     return bbox[2] - bbox[0]
 
 
