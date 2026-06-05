@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+logs/
+.env
+*.env
+
+uae_daily_brief.png
+uae_daily_brief.pdf
+briefs/*.pdf
+briefs/*_raw.pdf
+
+.DS_Store
+Thumbs.db
