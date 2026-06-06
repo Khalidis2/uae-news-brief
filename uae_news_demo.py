@@ -51,8 +51,15 @@ MAX_PDF_ARTICLES = 24
 MAX_PDF_ARTICLES_PER_CATEGORY = 4
 PDF_CARD_GAP = 18
 PDF_CARD_PADDING = 22
+PDF_CARD_RADIUS = 8
+PDF_LEAD_IMAGE_HEIGHT = 395
+PDF_LEAD_PADDING = 28
+PDF_TITLE_MAX_LINES = 3
+PDF_LEAD_TITLE_MAX_LINES = 3
+PDF_LEAD_BRIEF_MAX_LINES = 3
 PDF_THUMBNAIL_WIDTH = 300
 PDF_THUMBNAIL_HEIGHT = 190
+PDF_CONTENT_TOP = 210
 PDF_RESOLUTION = 144.0
 PDF_LINK_SCALE = 72.0 / PDF_RESOLUTION
 BRIEF_MAX_CHARS = 560
@@ -430,11 +437,17 @@ UAE_SIGNALS = [
 ]
 
 COLORS = {
+    "paper": (246, 248, 250),
+    "surface": (255, 255, 255),
+    "shadow": (226, 233, 238),
     "ink": (28, 38, 51),
     "muted": (98, 111, 128),
+    "soft_muted": (132, 145, 160),
     "line": (222, 228, 235),
     "light_line": (238, 242, 246),
     "accent": (0, 115, 125),
+    "accent_soft": (230, 246, 247),
+    "flag_red": (196, 45, 54),
     "Leadership": (130, 88, 34),
     "Government": (0, 112, 150),
     "Defense & Security": (67, 98, 80),
@@ -1242,6 +1255,90 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, m
     return lines
 
 
+def limited_text_lines(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    max_lines: int,
+) -> list[str]:
+    lines = wrap_text(draw, text, font, max_width)
+    if len(lines) <= max_lines:
+        return lines
+
+    fitted = lines[:max_lines]
+    suffix = "..."
+    final_line = fitted[-1].rstrip()
+    while final_line and text_width(draw, f"{final_line}{suffix}", font) > max_width:
+        final_line = final_line[:-1].rstrip()
+    fitted[-1] = f"{final_line}{suffix}" if final_line else suffix
+    return fitted
+
+
+def blend_color(
+    color: tuple[int, int, int],
+    background: tuple[int, int, int] = (255, 255, 255),
+    opacity: float = 0.16,
+) -> tuple[int, int, int]:
+    return tuple(int((channel * opacity) + (background[index] * (1 - opacity))) for index, channel in enumerate(color))
+
+
+def draw_soft_shadow(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    radius: int = PDF_CARD_RADIUS,
+) -> None:
+    left, top, right, bottom = box
+    draw.rounded_rectangle((left + 1, top + 7, right + 1, bottom + 7), radius=radius, fill=COLORS["shadow"])
+    draw.rounded_rectangle((left, top + 3, right, bottom + 3), radius=radius, fill=(236, 241, 245))
+
+
+def draw_pill(
+    draw: ImageDraw.ImageDraw,
+    right: int,
+    top: int,
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int],
+    text_fill: tuple[int, int, int],
+    horizontal_padding: int = 18,
+    height_padding: int = 8,
+) -> tuple[int, int, int, int]:
+    label_width = text_width(draw, text, font)
+    label_height = line_height(draw, font)
+    box = (
+        right - label_width - (horizontal_padding * 2),
+        top,
+        right,
+        top + label_height + (height_padding * 2),
+    )
+    draw.rounded_rectangle(box, radius=(box[3] - box[1]) // 2, fill=fill)
+    draw_text(
+        draw,
+        (right - horizontal_padding, top + height_padding - 1),
+        text,
+        fill=text_fill,
+        font=font,
+        anchor="ra",
+    )
+    return box
+
+
+def draw_text_in_box(
+    draw: ImageDraw.ImageDraw,
+    left: int,
+    right: int,
+    y: int,
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int],
+) -> None:
+    if has_arabic(text):
+        draw_text(draw, (right, y), text, fill=fill, font=font, anchor="ra")
+    else:
+        draw_text(draw, (left, y), text, fill=fill, font=font, anchor="la")
+
+
 def group_articles(articles: list[Article]) -> dict[str, list[Article]]:
     grouped = {category: [] for category in CATEGORY_ORDER}
     for article in articles:
@@ -1473,6 +1570,30 @@ def paste_cover_image(base: Image.Image, source: Image.Image, box: tuple[int, in
     base.paste(fitted, (box[0], box[1]), mask)
 
 
+def add_rounded_gradient_overlay(
+    base: Image.Image,
+    box: tuple[int, int, int, int],
+    radius: int = PDF_CARD_RADIUS,
+    top_alpha: int = 0,
+    bottom_alpha: int = 185,
+) -> None:
+    width = box[2] - box[0]
+    height = box[3] - box[1]
+    region = base.crop(box).convert("RGBA")
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    for y in range(height):
+        progress = y / max(1, height - 1)
+        alpha = int(top_alpha + ((bottom_alpha - top_alpha) * progress))
+        overlay_draw.line((0, y, width, y), fill=(0, 0, 0, alpha))
+
+    mask = Image.new("L", (width, height), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.rounded_rectangle((0, 0, width, height), radius=radius, fill=255)
+    combined = Image.alpha_composite(region, overlay)
+    base.paste(combined.convert("RGB"), (box[0], box[1]), mask)
+
+
 def draw_hero(
     image: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -1535,6 +1656,48 @@ def draw_header(draw: ImageDraw.ImageDraw, title_font: ImageFont.ImageFont, date
         anchor="ra",
     )
     draw.line((MARGIN_X, 184, IMAGE_WIDTH - MARGIN_X, 184), fill=COLORS["line"], width=2)
+
+
+def draw_pdf_header(
+    draw: ImageDraw.ImageDraw,
+    title_font: ImageFont.ImageFont,
+    date_font: ImageFont.ImageFont,
+    label_font: ImageFont.ImageFont,
+    page_number: int,
+) -> None:
+    now = datetime.now(UAE_TIMEZONE)
+    draw.rectangle((0, 0, IMAGE_WIDTH, 14), fill=COLORS["accent"])
+    draw.rectangle((0, 14, IMAGE_WIDTH, 18), fill=COLORS["flag_red"])
+
+    draw_text(
+        draw,
+        (IMAGE_WIDTH - MARGIN_X, 58),
+        "موجز الإمارات اليومي",
+        fill=COLORS["ink"],
+        font=title_font,
+        anchor="ra",
+    )
+    draw_text(
+        draw,
+        (IMAGE_WIDTH - MARGIN_X, 126),
+        arabic_datetime(now, include_weekday=True),
+        fill=COLORS["muted"],
+        font=date_font,
+        anchor="ra",
+    )
+
+    draw_pill(
+        draw,
+        MARGIN_X + 118,
+        54,
+        f"صفحة {page_number}",
+        label_font,
+        fill=COLORS["accent_soft"],
+        text_fill=COLORS["accent"],
+        horizontal_padding=18,
+        height_padding=8,
+    )
+    draw.line((MARGIN_X, 176, IMAGE_WIDTH - MARGIN_X, 176), fill=COLORS["line"], width=1)
 
 
 def draw_footer(draw: ImageDraw.ImageDraw, footer_font: ImageFont.ImageFont, page_number: int | None = None) -> None:
@@ -1670,10 +1833,21 @@ def pdf_card_text_lines(
     item: PdfArticle,
     fonts: dict[str, ImageFont.ImageFont],
     text_width_limit: int,
-) -> tuple[list[str], list[str], str]:
-    title_lines = wrap_text(draw, item.article.title, fonts["pdf_headline"], text_width_limit)
-    brief_lines = wrap_text(draw, item.brief, fonts["pdf_brief"], text_width_limit)[:PDF_BRIEF_MAX_LINES] if item.brief else []
-    return title_lines, brief_lines, source_label(item.article)
+) -> tuple[list[str], list[str], list[str]]:
+    title_lines = limited_text_lines(
+        draw,
+        item.article.title,
+        fonts["pdf_headline"],
+        text_width_limit,
+        PDF_TITLE_MAX_LINES,
+    )
+    brief_lines = (
+        limited_text_lines(draw, item.brief, fonts["pdf_brief"], text_width_limit, PDF_BRIEF_MAX_LINES)
+        if item.brief
+        else []
+    )
+    source_lines = limited_text_lines(draw, source_label(item.article), fonts["pdf_source"], text_width_limit, 1)
+    return title_lines, brief_lines, source_lines
 
 
 def measure_pdf_article_card(
@@ -1683,16 +1857,174 @@ def measure_pdf_article_card(
 ) -> int:
     card_width = IMAGE_WIDTH - (MARGIN_X * 2)
     text_width_limit = card_width - (PDF_CARD_PADDING * 3) - PDF_THUMBNAIL_WIDTH
-    title_lines, brief_lines, _source = pdf_card_text_lines(draw, item, fonts, text_width_limit)
+    title_lines, brief_lines, source_lines = pdf_card_text_lines(draw, item, fonts, text_width_limit)
 
-    text_height = line_height(draw, fonts["pdf_category"]) + 14
+    text_height = line_height(draw, fonts["pdf_category"]) + 24
     text_height += len(title_lines) * (line_height(draw, fonts["pdf_headline"]) + 6)
     if brief_lines:
         text_height += 8 + len(brief_lines) * (line_height(draw, fonts["pdf_brief"]) + 5)
-    text_height += line_height(draw, fonts["pdf_source"]) + 10
-    text_height += line_height(draw, fonts["pdf_link"]) + 8
+    text_height += max(1, len(source_lines)) * (line_height(draw, fonts["pdf_source"]) + 5) + 8
+    text_height += line_height(draw, fonts["pdf_link"]) + 16
     inner_height = max(PDF_THUMBNAIL_HEIGHT, text_height)
     return inner_height + (PDF_CARD_PADDING * 2)
+
+
+def pdf_lead_text_lines(
+    draw: ImageDraw.ImageDraw,
+    item: PdfArticle,
+    fonts: dict[str, ImageFont.ImageFont],
+    text_width_limit: int,
+) -> tuple[list[str], list[str], list[str]]:
+    title_lines = limited_text_lines(
+        draw,
+        item.article.title,
+        fonts["pdf_lead_title"],
+        text_width_limit,
+        PDF_LEAD_TITLE_MAX_LINES,
+    )
+    brief_lines = (
+        limited_text_lines(draw, item.brief, fonts["pdf_brief"], text_width_limit, PDF_LEAD_BRIEF_MAX_LINES)
+        if item.brief
+        else []
+    )
+    source_lines = limited_text_lines(draw, source_label(item.article), fonts["pdf_source"], text_width_limit, 1)
+    return title_lines, brief_lines, source_lines
+
+
+def measure_pdf_lead_card(
+    draw: ImageDraw.ImageDraw,
+    item: PdfArticle,
+    fonts: dict[str, ImageFont.ImageFont],
+) -> int:
+    card_width = IMAGE_WIDTH - (MARGIN_X * 2)
+    text_width_limit = card_width - (PDF_LEAD_PADDING * 2)
+    _title_lines, brief_lines, _source_lines = pdf_lead_text_lines(draw, item, fonts, text_width_limit)
+    text_height = PDF_LEAD_PADDING
+    if brief_lines:
+        text_height += len(brief_lines) * (line_height(draw, fonts["pdf_brief"]) + 6) + 12
+    text_height += line_height(draw, fonts["pdf_link"]) + 18
+    text_height += PDF_LEAD_PADDING
+    return PDF_LEAD_IMAGE_HEIGHT + text_height
+
+
+def draw_pdf_lead_card(
+    page: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    item: PdfArticle,
+    fonts: dict[str, ImageFont.ImageFont],
+    y: int,
+    page_index: int,
+    link_areas: list[PdfLinkArea],
+) -> int:
+    card_left = MARGIN_X
+    card_right = IMAGE_WIDTH - MARGIN_X
+    card_height = measure_pdf_lead_card(draw, item, fonts)
+    card_box = (card_left, y, card_right, y + card_height)
+    category = item.article.category
+    section_color = COLORS[category]
+
+    draw_soft_shadow(draw, card_box)
+    draw.rounded_rectangle(
+        card_box,
+        radius=PDF_CARD_RADIUS,
+        fill=COLORS["surface"],
+        outline=(232, 238, 243),
+        width=1,
+    )
+
+    image_box = (card_left, y, card_right, y + PDF_LEAD_IMAGE_HEIGHT)
+    if item.image:
+        paste_cover_image(page, item.image, image_box, radius=PDF_CARD_RADIUS)
+        add_rounded_gradient_overlay(page, image_box, radius=PDF_CARD_RADIUS, top_alpha=12, bottom_alpha=205)
+
+    text_right = card_right - PDF_LEAD_PADDING
+    text_left = card_left + PDF_LEAD_PADDING
+    text_width_limit = text_right - text_left
+    title_lines, brief_lines, source_lines = pdf_lead_text_lines(draw, item, fonts, text_width_limit)
+
+    pill_top = y + PDF_LEAD_PADDING
+    draw_pill(
+        draw,
+        text_right,
+        pill_top,
+        CATEGORY_LABELS[category],
+        fonts["pdf_category"],
+        fill=(255, 255, 255),
+        text_fill=section_color,
+        horizontal_padding=16,
+        height_padding=7,
+    )
+
+    title_step = line_height(draw, fonts["pdf_lead_title"]) + 7
+    source_step = line_height(draw, fonts["pdf_source"]) + 5
+    overlay_y = y + PDF_LEAD_IMAGE_HEIGHT - PDF_LEAD_PADDING
+    overlay_y -= len(source_lines) * source_step
+    overlay_y -= len(title_lines) * title_step
+    overlay_y -= 12
+
+    for line in title_lines:
+        draw_text_in_box(
+            draw,
+            text_left,
+            text_right,
+            overlay_y,
+            line,
+            fonts["pdf_lead_title"],
+            fill=(255, 255, 255),
+        )
+        overlay_y += title_step
+
+    overlay_y += 6
+    for line in source_lines:
+        draw_text_in_box(
+            draw,
+            text_left,
+            text_right,
+            overlay_y,
+            line,
+            fonts["pdf_source"],
+            fill=(226, 236, 241),
+        )
+        overlay_y += source_step
+
+    text_y = y + PDF_LEAD_IMAGE_HEIGHT + PDF_LEAD_PADDING
+    for line in brief_lines:
+        draw_text_in_box(
+            draw,
+            text_left,
+            text_right,
+            text_y,
+            line,
+            fonts["pdf_brief"],
+            fill=COLORS["muted"],
+        )
+        text_y += line_height(draw, fonts["pdf_brief"]) + 6
+    text_y += 12
+
+    link_text = "فتح الخبر الأصلي"
+    link_width = text_width(draw, link_text, fonts["pdf_link"])
+    link_padding_x = 20
+    link_padding_y = 8
+    link_left = text_right - link_width - (link_padding_x * 2)
+    link_top = text_y
+    link_bottom = text_y + line_height(draw, fonts["pdf_link"]) + (link_padding_y * 2)
+    draw.rounded_rectangle(
+        (link_left, link_top, text_right, link_bottom),
+        radius=(link_bottom - link_top) // 2,
+        fill=COLORS["accent"],
+    )
+    draw_text(
+        draw,
+        (text_right - link_padding_x, text_y + link_padding_y - 1),
+        link_text,
+        fill=(255, 255, 255),
+        font=fonts["pdf_link"],
+        anchor="ra",
+    )
+    if item.publisher_url:
+        link_areas.append(PdfLinkArea(page_index=page_index, rect=(link_left, link_top, text_right, link_bottom), url=item.publisher_url))
+
+    return y + card_height + PDF_CARD_GAP
 
 
 def draw_pdf_article_card(
@@ -1710,12 +2042,14 @@ def draw_pdf_article_card(
     card_height = measure_pdf_article_card(draw, item, fonts)
     category = item.article.category
     section_color = COLORS[category]
+    card_box = (card_left, y, card_right, y + card_height)
 
+    draw_soft_shadow(draw, card_box)
     draw.rounded_rectangle(
-        (card_left, y, card_right, y + card_height),
-        radius=8,
-        fill=(255, 255, 255),
-        outline=COLORS["line"],
+        card_box,
+        radius=PDF_CARD_RADIUS,
+        fill=COLORS["surface"],
+        outline=(232, 238, 243),
         width=1,
     )
 
@@ -1724,78 +2058,92 @@ def draw_pdf_article_card(
     image_top = y + PDF_CARD_PADDING
     image_bottom = image_top + PDF_THUMBNAIL_HEIGHT
     if item.image:
-        paste_cover_image(page, item.image, (image_left, image_top, image_right, image_bottom), radius=8)
+        paste_cover_image(page, item.image, (image_left, image_top, image_right, image_bottom), radius=PDF_CARD_RADIUS)
 
     text_right = image_left - PDF_CARD_PADDING
     text_left = card_left + PDF_CARD_PADDING
     text_width_limit = text_right - text_left
     text_y = y + PDF_CARD_PADDING
 
-    draw.ellipse((text_right - 14, text_y + 9, text_right - 3, text_y + 20), fill=section_color)
-    draw_text(
+    draw_pill(
         draw,
-        (text_right - 24, text_y),
+        text_right,
+        text_y,
         CATEGORY_LABELS[category],
-        fill=section_color,
-        font=fonts["pdf_category"],
-        anchor="ra",
+        fonts["pdf_category"],
+        fill=blend_color(section_color, opacity=0.13),
+        text_fill=section_color,
+        horizontal_padding=15,
+        height_padding=6,
     )
-    text_y += line_height(draw, fonts["pdf_category"]) + 14
+    text_y += line_height(draw, fonts["pdf_category"]) + 24
 
-    title_lines, brief_lines, source_text = pdf_card_text_lines(draw, item, fonts, text_width_limit)
+    title_lines, brief_lines, source_lines = pdf_card_text_lines(draw, item, fonts, text_width_limit)
     for line in title_lines:
-        draw_text(
+        draw_text_in_box(
             draw,
-            (text_right, text_y),
+            text_left,
+            text_right,
+            text_y,
             line,
+            fonts["pdf_headline"],
             fill=COLORS["ink"],
-            font=fonts["pdf_headline"],
-            anchor="ra",
         )
         text_y += line_height(draw, fonts["pdf_headline"]) + 6
 
     if brief_lines:
         text_y += 8
         for line in brief_lines:
-            draw_text(
+            draw_text_in_box(
                 draw,
-                (text_right, text_y),
+                text_left,
+                text_right,
+                text_y,
                 line,
+                fonts["pdf_brief"],
                 fill=COLORS["muted"],
-                font=fonts["pdf_brief"],
-                anchor="ra",
             )
             text_y += line_height(draw, fonts["pdf_brief"]) + 5
 
-    draw_text(
-        draw,
-        (text_right, text_y + 4),
-        source_text,
-        fill=COLORS["muted"],
-        font=fonts["pdf_source"],
-        anchor="ra",
-    )
-    text_y += line_height(draw, fonts["pdf_source"]) + 14
+    text_y += 6
+    for line in source_lines:
+        draw_text_in_box(
+            draw,
+            text_left,
+            text_right,
+            text_y,
+            line,
+            fonts["pdf_source"],
+            fill=COLORS["soft_muted"],
+        )
+        text_y += line_height(draw, fonts["pdf_source"]) + 5
+    text_y += 8
 
     link_text = "فتح الخبر الأصلي"
     link_width = text_width(draw, link_text, fonts["pdf_link"])
-    link_left = text_right - link_width
+    link_padding_x = 18
+    link_padding_y = 7
+    link_left = text_right - link_width - (link_padding_x * 2)
     link_top = text_y
-    link_bottom = text_y + line_height(draw, fonts["pdf_link"]) + 4
+    link_bottom = text_y + line_height(draw, fonts["pdf_link"]) + (link_padding_y * 2)
+    draw.rounded_rectangle(
+        (link_left, link_top, text_right, link_bottom),
+        radius=(link_bottom - link_top) // 2,
+        fill=COLORS["accent_soft"],
+    )
     draw_text(
         draw,
-        (text_right, text_y),
+        (text_right - link_padding_x, text_y + link_padding_y - 1),
         link_text,
         fill=COLORS["accent"],
         font=fonts["pdf_link"],
         anchor="ra",
     )
-    draw.line((link_left, link_bottom, text_right, link_bottom), fill=COLORS["accent"], width=1)
     if item.publisher_url:
         link_areas.append(
             PdfLinkArea(
                 page_index=page_index,
-                rect=(link_left - 4, link_top - 2, text_right + 4, link_bottom + 4),
+                rect=(link_left, link_top, text_right, link_bottom),
                 url=item.publisher_url,
             )
         )
@@ -1804,11 +2152,11 @@ def draw_pdf_article_card(
 
 
 def new_pdf_page(fonts: dict[str, ImageFont.ImageFont], page_number: int) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
-    page = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), (255, 255, 255))
+    page = Image.new("RGB", (IMAGE_WIDTH, IMAGE_HEIGHT), COLORS["paper"])
     draw = ImageDraw.Draw(page)
-    draw_header(draw, fonts["title"], fonts["date"])
+    draw_pdf_header(draw, fonts["title"], fonts["date"], fonts["pdf_source"], page_number)
     draw_footer(draw, fonts["footer"], page_number)
-    return page, draw, HEADER_BOTTOM
+    return page, draw, PDF_CONTENT_TOP
 
 
 def draw_no_real_images_message(draw: ImageDraw.ImageDraw, message_font: ImageFont.ImageFont) -> None:
@@ -1860,6 +2208,7 @@ def create_briefing_pdf(articles: list[Article]) -> int:
         "message": load_font(33, bold=True),
         "footer": load_font(20),
         "pdf_category": load_font(23, bold=True),
+        "pdf_lead_title": load_font(36, bold=True),
         "pdf_headline": load_font(28, bold=True),
         "pdf_brief": load_font(21),
         "pdf_source": load_font(18),
@@ -1880,7 +2229,14 @@ def create_briefing_pdf(articles: list[Article]) -> int:
             draw_no_news_message(draw, fonts["message"])
         pages.append(page)
     else:
-        for item in pdf_items:
+        first_item, *remaining_items = pdf_items
+        lead_height = measure_pdf_lead_card(draw, first_item, fonts)
+        if y + lead_height <= FOOTER_TOP - 22:
+            y = draw_pdf_lead_card(page, draw, first_item, fonts, y, page_number - 1, link_areas)
+        else:
+            y = draw_pdf_article_card(page, draw, first_item, fonts, y, page_number - 1, link_areas)
+
+        for item in remaining_items:
             card_height = measure_pdf_article_card(draw, item, fonts)
             if y + card_height > FOOTER_TOP - 22:
                 pages.append(page)
