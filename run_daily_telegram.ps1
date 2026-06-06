@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$OutputEncoding = [System.Text.UTF8Encoding]::new()
+
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $LogDir = Join-Path $ProjectDir "logs"
 $Timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
@@ -22,13 +25,16 @@ try {
         Write-Log "Using project virtual environment Python."
         & $VenvPython ".\send_to_telegram.py" *>&1 | Tee-Object -FilePath $LogFile -Append
     }
+    elseif (Get-Command python -ErrorAction SilentlyContinue) {
+        Write-Log "Using python from PATH."
+        & python ".\send_to_telegram.py" *>&1 | Tee-Object -FilePath $LogFile -Append
+    }
     elseif (Get-Command py -ErrorAction SilentlyContinue) {
         Write-Log "Using py -3.11."
         & py -3.11 ".\send_to_telegram.py" *>&1 | Tee-Object -FilePath $LogFile -Append
     }
     else {
-        Write-Log "Using python from PATH."
-        & python ".\send_to_telegram.py" *>&1 | Tee-Object -FilePath $LogFile -Append
+        throw "No Python command found. Install Python 3.11 or create .venv in the project."
     }
 
     if ($LASTEXITCODE -ne 0) {

@@ -2,8 +2,8 @@ name: UAE Daily Brief Telegram
 
 on:
   schedule:
-    # 04:00 UTC = 08:00 UAE time.
-    - cron: "0 4 * * *"
+    # 03:00 UTC = 07:00 UAE time.
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
 concurrency:

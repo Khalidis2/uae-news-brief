@@ -4,7 +4,7 @@ This makes the UAE daily brief run in the cloud even when your PC is off.
 
 GitHub Actions will:
 
-- Run every day at 08:00 UAE time.
+- Run every day at 07:00 UAE time.
 - Generate the PDF from Google News RSS.
 - Send the dated PDF to Telegram.
 - Keep the bot token in GitHub Secrets, not in the code.
@@ -81,10 +81,10 @@ The workflow file is:
 It runs daily with this schedule:
 
 ```yaml
-cron: "0 4 * * *"
+cron: "0 3 * * *"
 ```
 
-That is 04:00 UTC, which is 08:00 in the UAE.
+That is 03:00 UTC, which is 07:00 in the UAE.
 
 ## Notes
 
