@@ -62,7 +62,6 @@ PDF_THUMBNAIL_HEIGHT = 190
 PDF_CONTENT_TOP = 210
 PDF_SUMMARY_HERO_HEIGHT = 340
 PDF_SUMMARY_STAT_HEIGHT = 76
-PDF_SUMMARY_TAKEAWAY_HEIGHT = 320
 PDF_SUMMARY_CATEGORY_HEIGHT = 152
 PDF_SUMMARY_CATEGORY_GAP = 14
 PDF_SECTION_HEADER_HEIGHT = 86
@@ -1807,35 +1806,6 @@ def group_pdf_items_by_category(items: list[PdfArticle]) -> dict[str, list[PdfAr
     return grouped
 
 
-def summary_excerpt(item: PdfArticle, max_chars: int = 135) -> str:
-    text = clean_text(item.brief or item.article.summary or item.article.title)
-    sentence_excerpt = sentence_safe_excerpt(text, max_chars=max_chars, max_sentences=1)
-    if sentence_excerpt:
-        return sentence_excerpt
-    title = clean_text(item.article.title)
-    return title if len(title) <= max_chars else ""
-
-
-def summary_takeaway_items(items: list[PdfArticle], limit: int = 3) -> list[PdfArticle]:
-    selected: list[PdfArticle] = []
-    seen_categories: set[str] = set()
-    for item in items:
-        if item.article.category in seen_categories:
-            continue
-        selected.append(item)
-        seen_categories.add(item.article.category)
-        if len(selected) >= limit:
-            return selected
-
-    for item in items:
-        if item in selected:
-            continue
-        selected.append(item)
-        if len(selected) >= limit:
-            break
-    return selected
-
-
 def pdf_item_importance_key(item: PdfArticle) -> tuple[int, int, float, str]:
     source = (item.article.source or item.article.feed_label).lower()
     trusted_bonus = 1 if any(name in source for name in TRUSTED_SOURCE_NAMES) else 0
@@ -1860,99 +1830,6 @@ def draw_summary_stat(
     draw.rounded_rectangle((right - 8, top, right, bottom), radius=PDF_CARD_RADIUS, fill=color)
     draw_text(draw, (right - 24, top + 18), value, fill=COLORS["ink"], font=fonts["summary_value"], anchor="ra")
     draw_text(draw, (right - 24, bottom - 30), label, fill=COLORS["muted"], font=fonts["summary_label"], anchor="ra")
-
-
-def draw_summary_metrics_panel(
-    draw: ImageDraw.ImageDraw,
-    box: tuple[int, int, int, int],
-    total_article_count: int,
-    selected_count: int,
-    active_categories: int,
-    fonts: dict[str, ImageFont.ImageFont],
-) -> None:
-    left, top, right, bottom = box
-    draw_soft_shadow(draw, box)
-    draw.rounded_rectangle(box, radius=PDF_CARD_RADIUS, fill=COLORS["surface"], outline=(232, 238, 243), width=1)
-    draw.rounded_rectangle((right - 10, top + 18, right - 4, bottom - 18), radius=3, fill=COLORS["accent"])
-    draw_text(draw, (right - 28, top + 20), "مؤشرات الموجز", fill=COLORS["ink"], font=fonts["summary_title"], anchor="ra")
-
-    stats = [
-        (str(total_article_count), "عناصر مجمعة", COLORS["accent"]),
-        (str(selected_count), "أخبار مصورة", COLORS["flag_red"]),
-        (str(active_categories), "أقسام نشطة", COLORS["Economy"]),
-    ]
-    row_height = 58
-    y = top + 74
-    for value, label, color in stats:
-        draw.rounded_rectangle((left + 22, y, right - 28, y + row_height), radius=PDF_CARD_RADIUS, fill=blend_color(color, opacity=0.08))
-        draw.rounded_rectangle((right - 42, y + 10, right - 34, y + row_height - 10), radius=3, fill=color)
-        draw_text(draw, (right - 58, y + 8), value, fill=COLORS["ink"], font=fonts["summary_value"], anchor="ra")
-        draw_text(draw, (right - 160, y + 25), label, fill=COLORS["muted"], font=fonts["summary_label"], anchor="ra")
-        y += row_height + 10
-
-
-def draw_summary_takeaways_panel(
-    draw: ImageDraw.ImageDraw,
-    box: tuple[int, int, int, int],
-    items: list[PdfArticle],
-    fonts: dict[str, ImageFont.ImageFont],
-) -> None:
-    left, top, right, bottom = box
-    draw_soft_shadow(draw, box)
-    draw.rounded_rectangle(box, radius=PDF_CARD_RADIUS, fill=COLORS["surface"], outline=(232, 238, 243), width=1)
-    draw.rounded_rectangle((right - 10, top + 18, right - 4, bottom - 18), radius=3, fill=COLORS["flag_red"])
-    draw_text(draw, (right - 28, top + 20), "الخلاصة السريعة", fill=COLORS["ink"], font=fonts["summary_title"], anchor="ra")
-
-    text_left = left + 26
-    text_right = right - 34
-    text_width_limit = text_right - text_left - 18
-    y = top + 78
-
-    rows: list[tuple[int, PdfArticle, list[str]]] = []
-    for item in summary_takeaway_items(items, limit=8):
-        excerpt = sentence_safe_excerpt(item.brief or item.article.summary, max_chars=220, max_sentences=1)
-        if not excerpt:
-            continue
-        if "..." in excerpt or "…" in excerpt:
-            continue
-        lines = wrap_text(draw, excerpt, fonts["summary_headline"], text_width_limit)
-        if not lines or len(lines) > 3:
-            continue
-        rows.append((len(rows) + 1, item, lines))
-        if len(rows) >= 2:
-            break
-
-    if not rows:
-        fallback = "تفاصيل الأخبار مرتبة حسب الأقسام في الصفحات التالية."
-        for line in wrap_text(draw, fallback, fonts["summary_headline"], text_width_limit):
-            draw_text_in_box(draw, text_left, text_right - 44, y, line, fonts["summary_headline"], fill=COLORS["ink"])
-            y += line_height(draw, fonts["summary_headline"]) + 5
-        return
-
-    for index, item, lines in rows:
-        section_color = COLORS[item.article.category]
-        draw.rounded_rectangle((text_right - 34, y - 2, text_right, y + 28), radius=15, fill=blend_color(section_color, opacity=0.13))
-        draw_text(draw, (text_right - 17, y + 3), str(index), fill=section_color, font=fonts["summary_source"], anchor="ma")
-        line_y = y
-        for line in lines:
-            draw_text_in_box(draw, text_left, text_right - 44, line_y, line, fonts["summary_headline"], fill=COLORS["ink"])
-            line_y += line_height(draw, fonts["summary_headline"]) + 4
-
-        source = item.article.source or item.article.feed_label
-        draw_text_in_box(draw, text_left, text_right - 44, line_y, source, fonts["summary_source"], fill=COLORS["soft_muted"])
-        y = line_y + line_height(draw, fonts["summary_source"]) + 18
-        if y > bottom - 35:
-            break
-
-    if len(rows) < 2 and y <= bottom - 96:
-        fallback = "الصفحات التالية تعرض أبرز القصص حسب الأقسام مع روابط المصادر الأصلية."
-        fallback_lines = wrap_text(draw, fallback, fonts["summary_headline"], text_width_limit)
-        draw.rounded_rectangle((text_right - 34, y - 2, text_right, y + 28), radius=15, fill=COLORS["accent_soft"])
-        draw_text(draw, (text_right - 17, y + 3), str(len(rows) + 1), fill=COLORS["accent"], font=fonts["summary_source"], anchor="ma")
-        line_y = y
-        for line in fallback_lines:
-            draw_text_in_box(draw, text_left, text_right - 44, line_y, line, fonts["summary_headline"], fill=COLORS["ink"])
-            line_y += line_height(draw, fonts["summary_headline"]) + 4
 
 
 def draw_summary_category_card(
@@ -2018,17 +1895,6 @@ def draw_pdf_summary_page(
 
     hero_right = hero_box[2] - 28
     hero_left = hero_box[0] + 28
-    draw_pill(
-        draw,
-        hero_right,
-        hero_box[1] + 28,
-        "ملخص اليوم",
-        fonts["pdf_category"],
-        fill=(255, 255, 255),
-        text_fill=COLORS["accent"],
-        horizontal_padding=18,
-        height_padding=7,
-    )
 
     title_lines = limited_text_lines(draw, lead_item.article.title, fonts["pdf_lead_title"], hero_right - hero_left, 3)
     source_lines = limited_text_lines(draw, source_label(lead_item.article), fonts["summary_source"], hero_right - hero_left, 1)
@@ -2057,15 +1923,19 @@ def draw_pdf_summary_page(
 
     y = hero_box[3] + 20
     active_categories = sum(1 for category in CATEGORY_ORDER if grouped[category])
-    panel_gap = 18
-    panel_width = (IMAGE_WIDTH - (MARGIN_X * 2) - panel_gap) // 2
-    right_panel = (IMAGE_WIDTH - MARGIN_X - panel_width, y, IMAGE_WIDTH - MARGIN_X, y + PDF_SUMMARY_TAKEAWAY_HEIGHT)
-    left_panel = (MARGIN_X, y, MARGIN_X + panel_width, y + PDF_SUMMARY_TAKEAWAY_HEIGHT)
-    draw_summary_takeaways_panel(draw, right_panel, items, fonts)
-    draw_summary_metrics_panel(draw, left_panel, total_article_count, len(items), active_categories, fonts)
+    stat_gap = 16
+    stat_width = (IMAGE_WIDTH - (MARGIN_X * 2) - (stat_gap * 2)) // 3
+    stat_top = y
+    stats = [
+        (IMAGE_WIDTH - MARGIN_X - stat_width, IMAGE_WIDTH - MARGIN_X, str(total_article_count), "عناصر مجمعة", COLORS["accent"]),
+        (IMAGE_WIDTH - MARGIN_X - (stat_width * 2) - stat_gap, IMAGE_WIDTH - MARGIN_X - stat_width - stat_gap, str(len(items)), "أخبار مصورة", COLORS["flag_red"]),
+        (MARGIN_X, MARGIN_X + stat_width, str(active_categories), "أقسام نشطة", COLORS["Economy"]),
+    ]
+    for left, right, value, label, color in stats:
+        draw_summary_stat(draw, (left, stat_top, right, stat_top + PDF_SUMMARY_STAT_HEIGHT), value, label, color, fonts)
 
-    y += PDF_SUMMARY_TAKEAWAY_HEIGHT + 24
-    draw_text(draw, (IMAGE_WIDTH - MARGIN_X, y), "متابعة سريعة حسب القسم", fill=COLORS["ink"], font=fonts["summary_title"], anchor="ra")
+    y = stat_top + PDF_SUMMARY_STAT_HEIGHT + 28
+    draw_text(draw, (IMAGE_WIDTH - MARGIN_X, y), "الأقسام داخل الملف", fill=COLORS["ink"], font=fonts["summary_title"], anchor="ra")
     y += line_height(draw, fonts["summary_title"]) + 18
 
     grid_gap = PDF_SUMMARY_CATEGORY_GAP
