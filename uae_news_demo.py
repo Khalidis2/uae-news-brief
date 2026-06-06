@@ -1738,10 +1738,10 @@ def draw_summary_category_card(
 
     draw_soft_shadow(draw, box)
     draw.rounded_rectangle(box, radius=PDF_CARD_RADIUS, fill=COLORS["surface"], outline=(232, 238, 243), width=1)
-    draw_icon(draw, category, right - 34, top + 34, 38, section_color)
+    draw.rounded_rectangle((right - 12, top + 18, right - 5, top + 55), radius=3, fill=section_color)
     draw_text(
         draw,
-        (right - 68, top + 18),
+        (right - 26, top + 18),
         CATEGORY_LABELS[category],
         fill=COLORS["ink"],
         font=fonts["summary_section"],
