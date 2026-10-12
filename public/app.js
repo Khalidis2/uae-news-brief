@@ -25,7 +25,7 @@ const L = {
     alsoBy: n => `Also reported by ${n} ${n === 1 ? "outlet" : "outlets"}`, related: "Related stories", covered: n => `${n + 1} outlets`,
     srcAll: "All", srcNone: "None", srcShown: (a, b) => `${a} of ${b} sources`, saveToast: "Saved for later", unsaveToast: "Removed from saved",
     alertsUnsupported: "Notifications aren't supported in this browser", alertsBlocked: "Notifications are blocked in your browser settings", alertsOn: "Alerts on — you'll be notified of watchlist matches",
-    alertsOff: "Alerts off", watchHits: n => `${n} new ${n === 1 ? "story matches" : "stories match"} your watchlist`,
+    alertsOff: "Alerts off", slowDown: "Slow down a little — try again in a few seconds", srcHealth: (a, b) => `${a}/${b} sources responding`, srcFailed: "Not responding", watchHits: n => `${n} new ${n === 1 ? "story matches" : "stories match"} your watchlist`,
     helpTitle: "Keyboard shortcuts", keys: [["/", "Search"], ["j / k", "Next / previous story"], ["Enter", "Open story panel"], ["s", "Save / unsave"], ["o", "Open original article"], ["r", "Refresh now"], ["l", "Switch grid / list"], ["t", "Switch light / dark"], ["Esc", "Close panel"], ["?", "This help"]],
   },
   ar: {
@@ -44,7 +44,7 @@ const L = {
     alsoBy: n => `نشره أيضا ${n} ${n === 1 ? "مصدر" : "مصادر"}`, related: "أخبار ذات صلة", covered: n => `${n + 1} مصادر`,
     srcAll: "الكل", srcNone: "لا شيء", srcShown: (a, b) => `${a} من ${b} مصدرا`, saveToast: "تم الحفظ", unsaveToast: "أزيل من المحفوظات",
     alertsUnsupported: "المتصفح لا يدعم الإشعارات", alertsBlocked: "الإشعارات محظورة في إعدادات المتصفح", alertsOn: "التنبيهات مفعّلة — ستصلك إشعارات عند مطابقة قائمة المتابعة",
-    alertsOff: "التنبيهات متوقفة", watchHits: n => `${n} من الأخبار الجديدة تطابق قائمة متابعتك`,
+    alertsOff: "التنبيهات متوقفة", slowDown: "تمهّل قليلا — حاول بعد ثوان", srcHealth: (a, b) => `${a}/${b} مصدرا يعمل`, srcFailed: "لا يستجيب", watchHits: n => `${n} من الأخبار الجديدة تطابق قائمة متابعتك`,
     helpTitle: "اختصارات لوحة المفاتيح", keys: [["/", "بحث"], ["j / k", "الخبر التالي / السابق"], ["Enter", "فتح لوحة الخبر"], ["s", "حفظ / إلغاء الحفظ"], ["o", "فتح الخبر الأصلي"], ["r", "تحديث الآن"], ["l", "تبديل الشبكة / القائمة"], ["t", "تبديل الفاتح / الداكن"], ["Esc", "إغلاق اللوحة"], ["?", "هذه المساعدة"]],
   },
 };
@@ -68,7 +68,7 @@ const state = {
   hiddenSources: new Set(store.get("hiddenSources", [])), watch: store.get("watch", []), alerts: store.get("alerts", false),
   saved: new Map(store.get("saved", [])), read: new Set(store.get("read", [])),
   showSaved: false, bucket: null, limit: PAGE, selId: null, drawerId: null, list: [],
-  items: new Map(), seen: new Set(), pending: [], freshUntil: new Map(), updatedAt: 0, failing: false, loaded: false,
+  health: null, items: new Map(), seen: new Set(), pending: [], freshUntil: new Map(), updatedAt: 0, failing: false, loaded: false,
 };
 const t = () => L[state.lang];
 
@@ -77,10 +77,13 @@ async function load({ manual = false } = {}) {
   if (manual) $("refresh").classList.add("spin");
   try {
     const res = await fetch("/api/news" + (manual ? "?t=" + Date.now() : ""), { cache: "no-store" });
+    if (res.status === 429) { toast(t().slowDown); throw new RangeError("rate limited"); }
     if (!res.ok) throw new Error(res.status);
-    ingest((await res.json()).items || []);
+    const data = await res.json();
+    state.health = data.health || null;
+    ingest(data.items || []);
     state.updatedAt = Date.now(); state.failing = false;
-  } catch { state.failing = true; }
+  } catch (e) { if (!(e instanceof RangeError)) state.failing = true; }
   $("refresh").classList.remove("spin");
   update(); renderLive();
 }
@@ -206,7 +209,9 @@ function render() {
     grid.innerHTML = state.failing ? `<div class="err" style="grid-column:1/-1">${t().error}</div>` : `<div class="skeleton"></div>`.repeat(6);
     $("meta").textContent = ""; $("moreBtn").hidden = true; return;
   }
-  $("meta").textContent = state.showSaved ? t().savedCount(list.length) : t().count(list.length, state.items.size);
+  const h = state.health, text = state.showSaved ? t().savedCount(list.length) : t().count(list.length, state.items.size);
+  const warn = h && h.total && h.ok / h.total < 0.7, failed = h?.failed?.length ? `${t().srcFailed}: ${h.failed.join(", ")}` : "";
+  $("meta").innerHTML = esc(text) + (h && h.total ? ` <span class="health${warn ? " warn" : ""}" title="${esc(failed)}">· ${esc(t().srcHealth(h.ok, h.total))}</span>` : "");
   const shown = list.slice(0, state.limit);
   const nodes = shown.map((i, n) => { const c = card(i); if (n === 0 && state.layout === "grid" && innerWidth > 640 && !state.showSaved) c.classList.add("lead"); return c; });
   grid.replaceChildren(...(nodes.length ? nodes : [Object.assign(document.createElement("div"), { className: "empty", textContent: state.showSaved ? t().emptySaved : t().empty, style: "grid-column:1/-1" })]));

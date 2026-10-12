@@ -1234,6 +1234,7 @@ def collect_articles(
     timeout: float | None = None,
     retries: int | None = None,
     deadline: float | None = None,
+    stats: dict | None = None,
 ) -> list[Article]:
     articles: list[Article] = []
     key_index: dict[str, int] = {}  # normalized title -> index in `articles`
@@ -1244,6 +1245,8 @@ def collect_articles(
     feeds = feeds if feeds is not None else active_feeds()
     fetched = fetch_all_feeds(feeds, workers, timeout, retries, deadline)
     failed = [feed.label for feed, entries in fetched if entries is None]
+    if stats is not None:
+        stats.update(total=len(feeds), ok=len(feeds) - len(failed), failed=failed)
     print(f"المصادر: {len(feeds) - len(failed)} تعمل من أصل {len(feeds)}")
     if failed:
         print(f"Warning: {len(failed)} feeds failed: {', '.join(failed[:12])}{' ...' if len(failed) > 12 else ''}")

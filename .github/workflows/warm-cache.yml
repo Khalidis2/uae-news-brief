@@ -1,0 +1,24 @@
+name: Keep live app warm
+
+# Vercel functions forget their cache when idle, so the first visitor after a quiet spell would wait
+# for a full fetch of every source. Requesting the news endpoint every few minutes keeps it fresh.
+# Set the repository variable SITE_URL (for example https://your-site.vercel.app) to enable it.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  warm:
+    if: ${{ vars.SITE_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Request /api/news
+        env:
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 --max-time 90 \
+            -o /tmp/news.json -w "status=%{http_code} time=%{time_total}s\n" "${SITE_URL%/}/api/news"
+          python3 -c "import json; d=json.load(open('/tmp/news.json')); h=d.get('health',{}); print('stories', d.get('count'), 'sources', h.get('ok'), '/', h.get('total'))"

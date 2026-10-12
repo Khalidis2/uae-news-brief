@@ -77,6 +77,8 @@ input[type=search] { min-width: 220px; flex: 1; max-width: 340px; }
 #banner { display: none; position: sticky; top: 112px; z-index: 15; margin: 14px 0 0; }
 #banner button { width: 100%; background: var(--gold); color: var(--gold-ink); border: 0; border-radius: 12px; padding: 10px; font-weight: 800; font-size: 15px; box-shadow: 0 8px 24px var(--shadow); }
 
+.health { color: var(--faint); cursor: help; }
+.health.warn { color: #f5a524; font-weight: 700; }
 .meta { color: var(--muted); font-size: 14px; margin: 18px 0 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
 /* cards */
