@@ -1,0 +1,6 @@
+assets
+briefs
+logs
+*.pdf
+.github
+run_daily_telegram.ps1

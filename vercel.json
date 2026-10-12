@@ -1,0 +1,6 @@
+{
+  "functions": {
+    "api/news.py": { "maxDuration": 60 },
+    "api/enrich.py": { "maxDuration": 30 }
+  }
+}

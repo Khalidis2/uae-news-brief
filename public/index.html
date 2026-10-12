@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live News Brief</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%230a0e18%27/%3E%3Crect x=%277%27 y=%2713%27 width=%2718%27 height=%275%27 rx=%272.5%27 fill=%27%23e0ba64%27/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0e18; --card: #141b2c; --card-hi: #1a2338; --ink: #f3f5f9; --muted: #a0aabe; --faint: #68738a;
+    --line: #262f46; --gold: #e0ba64; --live: #3ddc84; --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Cairo", system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }
+  a { color: inherit; text-decoration: none; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px; }
+
+  header.top { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+  .bar { display: flex; align-items: center; gap: 14px; padding: 12px 0; flex-wrap: wrap; }
+  .brand { font-weight: 800; font-size: 22px; letter-spacing: .2px; }
+  .brand::before { content: ""; display: inline-block; width: 26px; height: 5px; background: var(--gold); border-radius: 3px; margin-inline-end: 10px; vertical-align: middle; }
+  .live { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 rgba(61,220,132,.6); animation: pulse 2s infinite; }
+  .live.stale .dot { background: #f5a524; animation: none; }
+  .live.error .dot { background: #f0555a; animation: none; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 9px rgba(61,220,132,0); } 100% { box-shadow: 0 0 0 0 rgba(61,220,132,0); } }
+  .spacer { flex: 1; }
+  .btn { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; font-size: 14px; font-weight: 600; }
+  .btn:hover { background: var(--card-hi); }
+  .btn.spin svg { animation: rot .8s linear infinite; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  .filters { display: flex; flex-direction: column; gap: 10px; padding-bottom: 14px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 600; color: var(--muted); transition: .15s; }
+  .chip:hover { color: var(--ink); }
+  .chip[aria-pressed="true"] { background: var(--gold); border-color: var(--gold); color: #1b1405; }
+  .chip .n { opacity: .7; font-weight: 400; margin-inline-start: 6px; font-size: 12px; }
+  .seg { display: inline-flex; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+  .seg button { background: none; border: 0; border-radius: 999px; padding: 5px 14px; font-size: 14px; font-weight: 600; color: var(--muted); }
+  .seg button[aria-pressed="true"] { background: var(--card-hi); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+  input[type=search], select { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; color: var(--ink); font: inherit; font-size: 14px; }
+  input[type=search] { min-width: 220px; flex: 1; max-width: 340px; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--muted); cursor: pointer; user-select: none; }
+  .switch input { accent-color: var(--gold); width: 16px; height: 16px; }
+  .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--faint); font-weight: 700; margin-inline-end: 4px; }
+
+  #banner { display: none; position: sticky; top: 76px; z-index: 15; margin: 14px 0 0; }
+  #banner button { width: 100%; background: var(--gold); color: #1b1405; border: 0; border-radius: 12px; padding: 10px; font-weight: 800; font-size: 15px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+
+  .meta { color: var(--muted); font-size: 14px; margin: 18px 0 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 18px; padding-bottom: 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; display: flex; flex-direction: column; transition: transform .15s, border-color .15s; }
+  .card:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--gold) 50%, var(--line)); }
+  .card.lead { grid-column: span 2; flex-direction: row; }
+  .card.lead .img { flex: 1.25; aspect-ratio: auto; min-height: 280px; }
+  .card.lead .body { flex: 1; justify-content: center; padding: 22px; }
+  .card.fresh { animation: flash 2.4s ease-out; }
+  @keyframes flash { 0% { box-shadow: 0 0 0 2px var(--gold); } 100% { box-shadow: 0 0 0 2px transparent; } }
+  .img { aspect-ratio: 16 / 9; background: linear-gradient(135deg, var(--c1, #22304f), var(--c2, #141b2c)); position: relative; overflow: hidden; }
+  .img img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .4s; }
+  .img img.ok { opacity: 1; }
+  .img .ph { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 800; font-size: 44px; color: rgba(255,255,255,.18); }
+  .badge { position: absolute; top: 10px; inset-inline-start: 10px; display: flex; gap: 6px; }
+  .tag { background: rgba(8,12,22,.78); backdrop-filter: blur(6px); color: #fff; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+  .tag.uae { background: var(--gold); color: #1b1405; }
+  .tag.new { background: var(--live); color: #04210f; }
+  .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .src { font-size: 13px; color: var(--muted); font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  .src .t { color: var(--faint); font-weight: 400; }
+  h3 { margin: 0; font-size: 19px; line-height: 1.4; font-weight: 800; }
+  .card.lead h3 { font-size: 25px; }
+  .sum { margin: 0; color: var(--muted); font-size: 14.5px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .tops { margin-top: auto; display: flex; gap: 6px; flex-wrap: wrap; padding-top: 4px; }
+  .tops span { font-size: 12px; color: var(--faint); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; }
+
+  .empty, .err { text-align: center; padding: 70px 10px; color: var(--muted); }
+  .skeleton { height: 300px; border-radius: var(--radius); background: linear-gradient(100deg, var(--card) 40%, var(--card-hi) 50%, var(--card) 60%); background-size: 200% 100%; animation: sh 1.3s infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+  @media (max-width: 640px) { .card.lead { grid-column: auto; flex-direction: column; } .card.lead .img { aspect-ratio: 16 / 9; min-height: 0; flex: none; } .brand { font-size: 19px; } #banner { top: 112px; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="bar">
+      <span class="brand" id="brand"></span>
+      <span class="live" id="live"><span class="dot"></span><span id="liveText"></span></span>
+      <span class="spacer"></span>
+      <button class="btn" id="refresh" title="Refresh now">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+        <span id="refreshText"></span>
+      </button>
+      <div class="seg" id="langSeg"><button data-lang="ar">عربي</button><button data-lang="en">EN</button></div>
+    </div>
+    <div class="filters">
+      <div class="row" id="regions"></div>
+      <div class="row" id="topics"></div>
+      <div class="row">
+        <input type="search" id="q">
+        <label class="switch"><input type="checkbox" id="uaeOnly"><span id="uaeLabel"></span></label>
+        <select id="hours"></select>
+        <div class="seg" id="sortSeg"></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="banner"><button id="bannerBtn"></button></div>
+  <div class="meta" id="meta"></div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<script>
+"use strict";
+const POLL_MS = 60_000;           // how often the page checks for new stories
+const TICK_MS = 15_000;           // how often relative times ("5m ago") are refreshed
+const NEW_BADGE_MS = 5 * 60_000;
+
+const TEXT = {
+  en: {
+    brand: "Live News Brief", refresh: "Refresh", searchPh: "Search headlines…", uaeOnly: "Mentions the UAE",
+    all: "All", latest: "Latest", top: "Top", hoursLabel: ["Last hour", "Last 3 hours", "Last 12 hours", "Last 24 hours", "Last 48 hours"],
+    regions: { all: "All news", uae: "UAE", middle_east: "Middle East", world: "World" },
+    topics: { politics: "Politics", business: "Business", security: "Security & Defense", tech: "Tech", science_health: "Science & Health", energy_climate: "Energy & Climate" },
+    live: s => `Live · updated ${s}`, stale: s => `Updated ${s} — retrying`, loading: "Loading…",
+    error: "Could not load the news. Retrying automatically.", empty: "No stories match these filters.",
+    newStories: n => `${n} new ${n === 1 ? "story" : "stories"} — tap to show`, count: (n, total) => `${n} of ${total} stories`,
+    ago: { now: "just now", m: n => `${n}m ago`, h: n => `${n}h ago`, d: n => `${n}d ago` }, newTag: "NEW", uaeTag: "UAE", sources: n => `${n} sources`,
+  },
+  ar: {
+    brand: "موجز الأخبار المباشر", refresh: "تحديث", searchPh: "ابحث في العناوين…", uaeOnly: "تذكر الإمارات",
+    all: "الكل", latest: "الأحدث", top: "الأهم", hoursLabel: ["آخر ساعة", "آخر 3 ساعات", "آخر 12 ساعة", "آخر 24 ساعة", "آخر 48 ساعة"],
+    regions: { all: "كل الأخبار", uae: "الإمارات", middle_east: "الشرق الأوسط", world: "العالم" },
+    topics: { politics: "السياسة", business: "الأعمال", security: "الأمن والدفاع", tech: "التقنية", science_health: "العلوم والصحة", energy_climate: "الطاقة والمناخ" },
+    live: s => `مباشر · آخر تحديث ${s}`, stale: s => `آخر تحديث ${s} — إعادة المحاولة`, loading: "جاري التحميل…",
+    error: "تعذر تحميل الأخبار. تتم إعادة المحاولة تلقائيا.", empty: "لا توجد أخبار مطابقة لهذه الفلاتر.",
+    newStories: n => `${n} ${n === 1 ? "خبر جديد" : "أخبار جديدة"} — اضغط للعرض`, count: (n, total) => `${n} من ${total} خبرا`,
+    ago: { now: "الآن", m: n => `منذ ${n} د`, h: n => `منذ ${n} س`, d: n => `منذ ${n} يوم` }, newTag: "جديد", uaeTag: "الإمارات",
+  },
+};
+const HOURS = [1, 3, 12, 24, 48];
+const TOPIC_KEYS = ["politics", "business", "security", "tech", "science_health", "energy_climate"];
+const REGION_KEYS = ["all", "uae", "middle_east", "world"];
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("lnb." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("lnb." + k, JSON.stringify(v)); } catch {} },
+};
+
+const state = {
+  lang: store.get("lang", (navigator.language || "en").toLowerCase().startsWith("ar") ? "ar" : "en"),
+  region: store.get("region", "all"), topics: new Set(store.get("topics", [])), uaeOnly: store.get("uaeOnly", false),
+  hours: store.get("hours", 24), sort: store.get("sort", "latest"), q: "",
+  items: new Map(), seen: new Set(), pending: [], freshUntil: new Map(), updatedAt: 0, failing: false, loaded: false,
+};
+const t = () => TEXT[state.lang];
+
+// ---------- data ----------
+async function load({ manual = false } = {}) {
+  const btn = $("refresh"); if (manual) btn.classList.add("spin");
+  try {
+    const res = await fetch("/api/news" + (manual ? "?t=" + Date.now() : ""), { cache: "no-store" });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    ingest(data.items || []);
+    state.updatedAt = Date.now(); state.failing = false;
+  } catch (e) {
+    state.failing = true;
+  } finally { btn.classList.remove("spin"); }
+  update(); renderLive();
+}
+
+function ingest(list) {
+  const incoming = list.filter(i => i.id && i.title);
+  if (!state.loaded) { // first load: nothing is "new"
+    incoming.forEach(i => { state.items.set(i.id, i); state.seen.add(i.id); });
+    state.loaded = true; return;
+  }
+  const fresh = [];
+  for (const i of incoming) {
+    if (state.items.has(i.id)) { state.items.set(i.id, { ...state.items.get(i.id), ...i, image: i.image || state.items.get(i.id).image }); continue; }
+    if (!state.seen.has(i.id)) fresh.push(i);
+    state.seen.add(i.id);
+  }
+  state.pending.push(...fresh.filter(matches)); // only announce stories the current filters would show
+  fresh.filter(i => !matches(i)).forEach(i => state.items.set(i.id, i));
+  state.pending.forEach(i => state.items.set(i.id, i));
+  state.pending = state.pending.filter((i, idx, a) => a.findIndex(j => j.id === i.id) === idx);
+}
+
+function showPending() {
+  const now = Date.now();
+  state.pending.forEach(i => state.freshUntil.set(i.id, now + NEW_BADGE_MS));
+  state.pending = []; render(); window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ---------- filtering ----------
+function matches(i) {
+  if (state.region !== "all" && i.region !== state.region) return false;
+  if (state.uaeOnly && !i.uae) return false;
+  if (state.topics.size && !i.topics.some(x => state.topics.has(x))) return false;
+  if (i.published && Date.now() - Date.parse(i.published) > state.hours * 3600_000) return false;
+  if (state.q) {
+    const hay = (i.title + " " + i.source + " " + (i.summary || "")).toLowerCase();
+    if (!state.q.split(/\s+/).every(w => hay.includes(w))) return false;
+  }
+  return !state.pending.some(p => p.id === i.id); // held back until the banner is tapped
+}
+
+function visibleItems() {
+  const list = [...state.items.values()].filter(matches);
+  const ts = i => (i.published ? Date.parse(i.published) : 0);
+  if (state.sort === "top") {
+    const decay = i => i.score - Math.max(0, (Date.now() - ts(i)) / 3600_000) * 0.35 + (i.uae ? 6 : 0);
+    list.sort((a, b) => decay(b) - decay(a));
+  } else list.sort((a, b) => ts(b) - ts(a));
+  return list;
+}
+
+// ---------- rendering ----------
+function agoText(iso) {
+  if (!iso) return "";
+  const m = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 60000)), a = t().ago;
+  if (m < 2) return a.now; if (m < 60) return a.m(m); if (m < 1440) return a.h(Math.floor(m / 60)); return a.d(Math.floor(m / 1440));
+}
+
+function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; }
+
+function card(i, index) {
+  const el = document.createElement("a");
+  el.className = "card" + (index === 0 && window.innerWidth > 640 ? " lead" : "");
+  el.href = i.link; el.target = "_blank"; el.rel = "noopener noreferrer"; el.dataset.id = i.id;
+  const fresh = (state.freshUntil.get(i.id) || 0) > Date.now();
+  if (fresh) el.classList.add("fresh");
+  const h = hue(i.source);
+  const tags = [i.uae ? `<span class="tag uae">${t().uaeTag}</span>` : "", fresh ? `<span class="tag new">${t().newTag}</span>` : ""].join("");
+  const tops = i.topics.map(x => `<span>${t().topics[x] || x}</span>`).join("");
+  el.innerHTML = `
+    <div class="img" style="--c1:hsl(${h} 38% 24%);--c2:hsl(${(h + 40) % 360} 30% 12%)">
+      <div class="ph">${esc((i.source || "?").trim().charAt(0).toUpperCase())}</div>
+      ${i.image ? `<img alt="" loading="lazy" referrerpolicy="no-referrer" src="${esc(i.image)}">` : ""}
+      <div class="badge">${tags}</div>
+    </div>
+    <div class="body">
+      <div class="src"><span>${esc(i.source)}</span><span class="t" data-ago="${i.published || ""}">${agoText(i.published)}</span></div>
+      <h3 dir="auto">${esc(i.title)}</h3>
+      ${i.summary ? `<p class="sum" dir="auto">${esc(i.summary)}</p>` : ""}
+      <div class="tops">${tops}</div>
+    </div>`;
+  const img = el.querySelector("img");
+  if (img) { img.onload = () => img.classList.add("ok"); img.onerror = () => { img.remove(); queueEnrich(i, el); }; }
+  else queueEnrich(i, el);
+  return el;
+}
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+function render() {
+  const list = visibleItems(), grid = $("grid"), total = state.items.size;
+  document.title = (state.pending.length ? `(${state.pending.length}) ` : "") + t().brand;
+  const banner = $("banner");
+  banner.style.display = state.pending.length ? "block" : "none";
+  $("bannerBtn").textContent = t().newStories(state.pending.length);
+  if (!state.loaded) { grid.innerHTML = `<div class="skeleton"></div>`.repeat(6); $("meta").textContent = t().loading; if (state.failing) grid.innerHTML = `<div class="err" style="grid-column:1/-1">${t().error}</div>`; return; }
+  $("meta").textContent = t().count(list.length, total);
+  grid.replaceChildren(...(list.length ? list.slice(0, 120).map(card) : [Object.assign(document.createElement("div"), { className: "empty", innerHTML: t().empty, style: "grid-column:1/-1" })]));
+}
+
+function renderLive() {
+  const live = $("live"), age = state.updatedAt ? Math.round((Date.now() - state.updatedAt) / 1000) : null;
+  const label = age === null ? "…" : age < 5 ? (state.lang === "ar" ? "الآن" : "now") : age < 60 ? (state.lang === "ar" ? `قبل ${age} ث` : `${age}s ago`) : (state.lang === "ar" ? `قبل ${Math.floor(age / 60)} د` : `${Math.floor(age / 60)}m ago`);
+  live.className = "live" + (state.failing ? " error" : age !== null && age > 180 ? " stale" : "");
+  $("liveText").textContent = state.failing ? t().stale(label) : t().live(label);
+}
+
+function renderChrome() {
+  document.documentElement.lang = state.lang; document.documentElement.dir = state.lang === "ar" ? "rtl" : "ltr";
+  $("brand").textContent = t().brand; $("refreshText").textContent = t().refresh; $("q").placeholder = t().searchPh; $("uaeLabel").textContent = t().uaeOnly;
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.lang === state.lang));
+  const counts = { region: {}, topic: {} };
+  const base = [...state.items.values()];
+  REGION_KEYS.forEach(r => counts.region[r] = r === "all" ? base.length : base.filter(i => i.region === r).length);
+  TOPIC_KEYS.forEach(k => counts.topic[k] = base.filter(i => i.topics.includes(k)).length);
+  $("regions").replaceChildren(...REGION_KEYS.map(r => chip(t().regions[r], counts.region[r], state.region === r, () => { state.region = r; persist(); update(); })));
+  $("topics").replaceChildren(
+    Object.assign(document.createElement("span"), { className: "label", textContent: state.lang === "ar" ? "الموضوع" : "Topic" }),
+    chip(t().all, null, state.topics.size === 0, () => { state.topics.clear(); persist(); update(); }),
+    ...TOPIC_KEYS.map(k => chip(t().topics[k], counts.topic[k], state.topics.has(k), () => { state.topics.has(k) ? state.topics.delete(k) : state.topics.add(k); persist(); update(); })));
+  $("hours").replaceChildren(...HOURS.map((h, n) => Object.assign(document.createElement("option"), { value: h, textContent: t().hoursLabel[n], selected: h === state.hours })));
+  $("sortSeg").replaceChildren(...["latest", "top"].map(s => Object.assign(document.createElement("button"), { textContent: t()[s], onclick: () => { state.sort = s; persist(); update(); } })));
+  [...$("sortSeg").children].forEach((b, n) => b.setAttribute("aria-pressed", ["latest", "top"][n] === state.sort));
+  $("uaeOnly").checked = state.uaeOnly;
+}
+
+function chip(text, n, on, onclick) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.setAttribute("aria-pressed", on); b.onclick = onclick;
+  b.innerHTML = esc(text) + (n === null ? "" : `<span class="n">${n}</span>`);
+  return b;
+}
+
+function persist() { store.set("lang", state.lang); store.set("region", state.region); store.set("topics", [...state.topics]); store.set("uaeOnly", state.uaeOnly); store.set("hours", state.hours); store.set("sort", state.sort); }
+function update() { renderChrome(); render(); }
+
+// ---------- lazy images and publisher links for stories without a feed image ----------
+const enrichQueue = [], enrichDone = new Set(); let enrichActive = 0;
+const io = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting) { io.unobserve(e.target); enrichQueue.push(e.target); pump(); } }), { rootMargin: "400px" });
+function queueEnrich(item, el) { if (enrichDone.has(item.id)) return; el._item = item; io.observe(el); }
+async function pump() {
+  while (enrichActive < 4 && enrichQueue.length) {
+    const el = enrichQueue.shift(), i = el._item; if (!i || enrichDone.has(i.id)) continue;
+    enrichDone.add(i.id); enrichActive++;
+    fetch("/api/enrich?u=" + encodeURIComponent(i.link)).then(r => r.ok ? r.json() : null).then(d => {
+      if (!d) return;
+      const cur = state.items.get(i.id); if (cur) { cur.image = d.image || cur.image; if (d.url) cur.link = d.url; if (!cur.summary && d.summary) cur.summary = d.summary; }
+      if (d.url && el.isConnected) el.href = d.url;
+      if (d.image && el.isConnected && !el.querySelector("img")) {
+        const img = Object.assign(document.createElement("img"), { alt: "", referrerPolicy: "no-referrer", src: d.image });
+        img.onload = () => img.classList.add("ok"); el.querySelector(".img").prepend(img);
+      }
+    }).catch(() => {}).finally(() => { enrichActive--; pump(); });
+  }
+}
+
+// ---------- wiring ----------
+$("langSeg").onclick = e => { const l = e.target.dataset?.lang; if (l) { state.lang = l; persist(); update(); renderLive(); } };
+$("q").oninput = e => { state.q = e.target.value.trim().toLowerCase(); render(); };
+$("uaeOnly").onchange = e => { state.uaeOnly = e.target.checked; persist(); render(); };
+$("hours").onchange = e => { state.hours = +e.target.value; persist(); render(); };
+$("refresh").onclick = () => load({ manual: true });
+$("bannerBtn").onclick = showPending;
+
+setInterval(() => { if (!document.hidden) load(); }, POLL_MS);                 // live polling while the tab is open
+setInterval(() => { document.querySelectorAll("[data-ago]").forEach(n => n.textContent = agoText(n.dataset.ago)); renderLive(); }, TICK_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - state.updatedAt > 30_000) load(); });
+
+renderChrome(); render(); load();
+</script>
+</body>
+</html>

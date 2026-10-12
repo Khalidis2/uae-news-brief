@@ -15,7 +15,9 @@ news sum/
   README.md
   requirements.txt
   send_to_telegram.py
-  uae_news_demo.py      (جمع الأخبار وتصفيتها)
+  news_core.py          (جمع الأخبار وتصفيتها)
+  uae_news_demo.py      (إنشاء ملف PDF)
+  app_core.py, api/, public/, dev_server.py  (التطبيق المباشر)
   brief_pdf.py          (تصميم ملف PDF)
   text_utils.py
   uae_daily_brief.pdf
@@ -111,6 +113,20 @@ C:\Users\aaldh\OneDrive\Desktop\news sum\logs
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "C:\Users\aaldh\OneDrive\Desktop\news sum\run_daily_telegram.ps1"
 ```
+
+## التطبيق المباشر (Live App)
+
+صفحة ويب تتحدث تلقائيا وتجمع الأخبار من أكثر من 60 مصدرا حول العالم في نفس اللحظة:
+
+- **مباشر:** الصفحة تفحص الجديد كل 60 ثانية وهي مفتوحة، وتظهر شارة «N أخبار جديدة» دون إعادة تحميل. زر «تحديث» يجلب الأخبار فورا.
+- **فلاتر فورية:** المنطقة (الإمارات / الشرق الأوسط / العالم)، الموضوع (السياسة، الأعمال، الأمن والدفاع، التقنية، العلوم والصحة، الطاقة والمناخ)، «تذكر الإمارات»، النافذة الزمنية، البحث، والترتيب (الأحدث / الأهم). تُحفظ اختياراتك في المتصفح.
+- **عربي وإنجليزي** بنقرة واحدة.
+
+تشغيل محلي: `python dev_server.py` ثم افتح `http://localhost:8000`.
+
+النشر على Vercel: اربط المستودع بمشروع Vercel (الإعدادات في `vercel.json`)؛ لا يلزم أي مفاتيح. نقطتا الخادم: `/api/news` و`/api/enrich`.
+
+ملاحظة عن «مباشر»: المصادر نفسها تنشر كل بضع دقائق، والخادم يخزن النتيجة 30 إلى 45 ثانية فقط، فالتأخير الفعلي عادة دقيقة إلى دقيقتين بعد نشر الخبر.
 
 ## تغطية أخبار العالم
 
