@@ -67,12 +67,15 @@ PDF_LEAD_BRIEF_MAX_LINES = 3
 PDF_THUMBNAIL_WIDTH = 300
 PDF_THUMBNAIL_HEIGHT = 190
 PDF_CONTENT_TOP = 172
-PDF_SUMMARY_HERO_HEIGHT = 500
+PDF_SUMMARY_HERO_HEIGHT = 420
 PDF_SUMMARY_STAT_HEIGHT = 62
-PDF_SUMMARY_CATEGORY_HEIGHT = 96
-PDF_SUMMARY_CATEGORY_GAP = 10
+PDF_SUMMARY_CATEGORY_HEIGHT = 64
+PDF_SUMMARY_CATEGORY_GAP = 8
 PDF_SECTION_HEADER_HEIGHT = 72
-PDF_SECTION_FEATURE_HEIGHT = 460
+PDF_SECTION_FEATURE_HEIGHT = 350
+PDF_FEATURE_BRIEF_MAX_LINES = 4
+PDF_PAGE_BOTTOM = FOOTER_TOP - 22
+PDF_COVER_HEADLINES_MAX = 5
 PDF_SECTION_COMPACT_HEIGHT = 154
 PDF_SECTION_PAGE_GAP = 20
 PDF_SECTION_IMAGE_WIDTH = 420
@@ -2020,6 +2023,10 @@ def draw_header(draw: ImageDraw.ImageDraw, title_font: ImageFont.ImageFont, date
     draw.line((MARGIN_X, 184, IMAGE_WIDTH - MARGIN_X, 184), fill=COLORS["line"], width=2)
 
 
+def brief_title() -> str:
+    return "موجز الإمارات والعالم اليومي" if WORLD_NEWS_ENABLED else "موجز الإمارات اليومي"
+
+
 def draw_pdf_header(
     draw: ImageDraw.ImageDraw,
     title_font: ImageFont.ImageFont,
@@ -2034,7 +2041,7 @@ def draw_pdf_header(
     draw_text(
         draw,
         (IMAGE_WIDTH - MARGIN_X, 48),
-        "موجز الإمارات اليومي",
+        brief_title(),
         fill=COLORS["ink"],
         font=title_font,
         anchor="ra",
@@ -2093,27 +2100,27 @@ def draw_summary_category_card(
 ) -> None:
     left, top, right, bottom = box
     section_color = COLORS[category]
+    middle = (top + bottom) // 2
+    label_height = line_height(draw, fonts["summary_section"])
 
     draw.line((left, top, right, top), fill=COLORS["line"], width=1)
-    draw.rounded_rectangle((right - 8, top + 18, right - 2, bottom - 18), radius=3, fill=section_color)
+    draw.rounded_rectangle((right - 8, top + 14, right - 2, bottom - 14), radius=3, fill=section_color)
     draw_text(
         draw,
-        (right - 24, top + 18),
+        (right - 24, middle - label_height // 2 - 3),
         CATEGORY_LABELS[category],
         fill=COLORS["ink"],
         font=fonts["summary_section"],
         anchor="ra",
     )
-
-    count_text = f"{len(items)} أخبار" if items else "لا أخبار مصورة"
-    draw_text(draw, (left, top + 20), count_text, fill=section_color, font=fonts["summary_source"], anchor="la")
-
-    subtitle = CATEGORY_SUBTITLES[category]
-    subtitle_lines = limited_text_lines(draw, subtitle, fonts["summary_source"], right - left - 40, 2)
-    y = top + 54
-    for line in subtitle_lines:
-        draw_text(draw, (right - 24, y), line, fill=COLORS["muted"], font=fonts["summary_source"], anchor="ra")
-        y += line_height(draw, fonts["summary_source"]) + 5
+    draw_text(
+        draw,
+        (left + 4, middle - line_height(draw, fonts["summary_source"]) // 2 - 3),
+        f"{len(items)}",
+        fill=section_color,
+        font=fonts["summary_value"],
+        anchor="la",
+    )
 
 
 def draw_pdf_summary_page(
@@ -2177,7 +2184,8 @@ def draw_pdf_summary_page(
 
     grid_gap = PDF_SUMMARY_CATEGORY_GAP
     card_width = (IMAGE_WIDTH - (MARGIN_X * 2) - grid_gap) // 2
-    for index, category in enumerate(CATEGORY_ORDER):
+    active = [category for category in CATEGORY_ORDER if grouped[category]]
+    for index, category in enumerate(active):
         row = index // 2
         column = index % 2
         if column == 0:
@@ -2193,7 +2201,52 @@ def draw_pdf_summary_page(
             fonts,
         )
 
+    rows = (len(active) + 1) // 2
+    y += rows * (PDF_SUMMARY_CATEGORY_HEIGHT + grid_gap) + 22
+    draw_cover_headlines(draw, items, lead_item, fonts, y, link_areas)
     return page
+
+
+def draw_cover_headlines(
+    draw: ImageDraw.ImageDraw,
+    items: list[PdfArticle],
+    lead_item: PdfArticle,
+    fonts: dict[str, ImageFont.ImageFont],
+    y: int,
+    link_areas: list[PdfLinkArea],
+) -> None:
+    """List the next most important stories on the cover, as many as fit above the footer."""
+    candidates = sorted((item for item in items if item is not lead_item), key=pdf_item_importance_key, reverse=True)
+    if not candidates:
+        return
+
+    left, right = MARGIN_X, IMAGE_WIDTH - MARGIN_X
+    title_height = line_height(draw, fonts["summary_title"])
+    if y + title_height + 20 + 90 > PDF_PAGE_BOTTOM:
+        return
+    draw_text(draw, (right, y), "أبرز العناوين", fill=COLORS["ink"], font=fonts["summary_title"], anchor="ra")
+    y += title_height + 18
+
+    headline_font = fonts["pdf_compact_title"]
+    source_font = fonts["summary_source"]
+    for item in candidates[:PDF_COVER_HEADLINES_MAX]:
+        title_lines = limited_text_lines(draw, item.article.title, headline_font, right - left - 40, 2)
+        row_height = len(title_lines) * (line_height(draw, headline_font) + 6) + line_height(draw, source_font) + 30
+        if y + row_height > PDF_PAGE_BOTTOM:
+            break
+
+        color = COLORS[item.article.category]
+        draw.line((left, y, right, y), fill=COLORS["light_line"], width=1)
+        draw.rounded_rectangle((right - 6, y + 14, right, y + row_height - 14), radius=3, fill=color)
+        text_y = y + 14
+        for line in title_lines:
+            draw_text_in_box(draw, left, right - 24, text_y, line, headline_font, fill=COLORS["ink"])
+            text_y += line_height(draw, headline_font) + 6
+        meta = f"{CATEGORY_LABELS[item.article.category]} | {item.article.source or item.article.feed_label}"
+        draw_text_in_box(draw, left, right - 24, text_y + 2, meta, source_font, fill=COLORS["soft_muted"])
+        if item.publisher_url:
+            link_areas.append(PdfLinkArea(page_index=0, rect=(left, y + 4, right, y + row_height - 4), url=item.publisher_url))
+        y += row_height
 
 
 def draw_pdf_section_header(
@@ -2235,6 +2288,34 @@ def draw_pdf_link_button(
     return box
 
 
+def pdf_feature_brief_lines(
+    draw: ImageDraw.ImageDraw,
+    item: PdfArticle,
+    fonts: dict[str, ImageFont.ImageFont],
+    width: int,
+) -> list[str]:
+    lines = complete_sentence_lines(
+        draw,
+        item.brief,
+        fonts["pdf_brief"],
+        width,
+        PDF_FEATURE_BRIEF_MAX_LINES,
+        max_chars=460,
+        max_sentences=3,
+    )
+    if not lines and not brief_is_weak(item.brief, item.article.title):
+        lines = limited_text_lines(draw, item.brief, fonts["pdf_brief"], width, PDF_FEATURE_BRIEF_MAX_LINES - 1)
+    return lines
+
+
+def pdf_feature_height(draw: ImageDraw.ImageDraw, item: PdfArticle, fonts: dict[str, ImageFont.ImageFont]) -> int:
+    brief_lines = pdf_feature_brief_lines(draw, item, fonts, IMAGE_WIDTH - (MARGIN_X * 2) - 24)
+    height = PDF_SECTION_FEATURE_HEIGHT
+    if brief_lines:
+        height += 22 + len(brief_lines) * (line_height(draw, fonts["pdf_brief"]) + 9) + 6
+    return height
+
+
 def draw_pdf_feature_story(
     page: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -2265,8 +2346,7 @@ def draw_pdf_feature_story(
     draw_text(draw, (right - 46, y + 36), label_text, fill=section_color, font=fonts["pdf_category"], anchor="ra")
 
     title_lines = limited_text_lines(draw, item.article.title, fonts["pdf_feature_title"], text_width_limit, 4)
-    source_text = source_label(item.article)
-    source_lines = limited_text_lines(draw, source_text, fonts["pdf_source"], text_width_limit, 1)
+    source_lines = limited_text_lines(draw, source_label(item.article), fonts["pdf_source"], text_width_limit, 1)
     text_y = bottom - 48
     text_y -= len(source_lines) * (line_height(draw, fonts["pdf_source"]) + 5)
     text_y -= len(title_lines) * (line_height(draw, fonts["pdf_feature_title"]) + 7)
@@ -2290,7 +2370,18 @@ def draw_pdf_feature_story(
     )
     if item.publisher_url:
         link_areas.append(PdfLinkArea(page_index=page_index, rect=link_box, url=item.publisher_url))
-    return bottom + PDF_SECTION_PAGE_GAP
+
+    total_bottom = bottom
+    brief_lines = pdf_feature_brief_lines(draw, item, fonts, right - left - 24)
+    if brief_lines:
+        step = line_height(draw, fonts["pdf_brief"]) + 9
+        brief_y = bottom + 22
+        draw.rounded_rectangle((right - 5, brief_y + 2, right, brief_y + len(brief_lines) * step - 6), radius=2, fill=section_color)
+        for line in brief_lines:
+            draw_text_in_box(draw, left + 6, right - 20, brief_y, line, fonts["pdf_brief"], fill=COLORS["ink"])
+            brief_y += step
+        total_bottom = brief_y + 6
+    return total_bottom + PDF_SECTION_PAGE_GAP
 
 
 def draw_pdf_compact_story(
@@ -2357,42 +2448,58 @@ def draw_pdf_compact_story(
         link_areas.append(PdfLinkArea(page_index=page_index, rect=link_box, url=item.publisher_url))
 
 
-def draw_pdf_category_page(
-    category: str,
-    items: list[PdfArticle],
+def draw_pdf_category_pages(
+    grouped: dict[str, list[PdfArticle]],
     fonts: dict[str, ImageFont.ImageFont],
-    page_number: int,
-    page_index: int,
+    first_page_number: int,
+    first_page_index: int,
     link_areas: list[PdfLinkArea],
-) -> Image.Image:
-    page, draw, y = new_pdf_page(fonts, page_number)
-    y = draw_pdf_section_header(draw, category, len(items), fonts, y)
-    y = draw_pdf_feature_story(page, draw, items[0], fonts, y, page_index, link_areas)
+) -> list[Image.Image]:
+    """Lay sections out continuously so short sections share a page instead of leaving blank space."""
+    pages: list[Image.Image] = []
+    measure_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    state: dict = {}
 
-    remaining = items[1:MAX_PDF_ARTICLES_PER_CATEGORY]
-    if not remaining:
-        return page
+    def start_page() -> None:
+        page, draw, y = new_pdf_page(fonts, first_page_number + len(pages))
+        pages.append(page)
+        state.update(page=page, draw=draw, y=y, index=first_page_index + len(pages) - 1)
 
-    card_gap = PDF_SECTION_PAGE_GAP
-    card_width = IMAGE_WIDTH - (MARGIN_X * 2)
-    for index, item in enumerate(remaining):
-        left = MARGIN_X
-        top = y + index * (PDF_SECTION_COMPACT_HEIGHT + card_gap)
-        draw_pdf_compact_story(
-            page,
-            draw,
-            item,
-            fonts,
-            (left, top, left + card_width, top + PDF_SECTION_COMPACT_HEIGHT),
-            page_index,
-            link_areas,
+    for category in CATEGORY_ORDER:
+        items = grouped[category][:MAX_PDF_ARTICLES_PER_CATEGORY]
+        if not items:
+            continue
+
+        block_height = PDF_SECTION_HEADER_HEIGHT + PDF_SECTION_PAGE_GAP + pdf_feature_height(measure_draw, items[0], fonts)
+        if not pages or state["y"] + block_height > PDF_PAGE_BOTTOM:
+            start_page()
+        state["y"] = draw_pdf_section_header(state["draw"], category, len(items), fonts, state["y"])
+        state["y"] = draw_pdf_feature_story(
+            state["page"], state["draw"], items[0], fonts, state["y"], state["index"], link_areas
         )
-    return page
+
+        for item in items[1:]:
+            if state["y"] + PDF_SECTION_COMPACT_HEIGHT > PDF_PAGE_BOTTOM:
+                start_page()
+                state["y"] = draw_pdf_section_header(state["draw"], category, len(items), fonts, state["y"])
+            top = state["y"]
+            draw_pdf_compact_story(
+                state["page"],
+                state["draw"],
+                item,
+                fonts,
+                (MARGIN_X, top, IMAGE_WIDTH - MARGIN_X, top + PDF_SECTION_COMPACT_HEIGHT),
+                state["index"],
+                link_areas,
+            )
+            state["y"] = top + PDF_SECTION_COMPACT_HEIGHT + PDF_SECTION_PAGE_GAP
+        state["y"] += 14
+    return pages
 
 
 def draw_footer(draw: ImageDraw.ImageDraw, footer_font: ImageFont.ImageFont, page_number: int | None = None) -> None:
     draw.line((MARGIN_X, FOOTER_TOP, IMAGE_WIDTH - MARGIN_X, FOOTER_TOP), fill=COLORS["line"], width=2)
-    footer_text = "المصادر: أخبار Google RSS | الصور: صفحة الناشر عند توفرها | نسخة محلية تجريبية"
+    footer_text = "مصادر إخبارية عربية وعالمية | الصور من صفحة الناشر الأصلية"
     if page_number is not None:
         footer_text = f"{footer_text} | صفحة {page_number}"
     draw_text(
@@ -2950,8 +3057,7 @@ def create_briefing_pdf(articles: list[Article]) -> int:
 
     pages: list[Image.Image] = []
     link_areas: list[PdfLinkArea] = []
-    page_number = 1
-    page, draw, _y = new_pdf_page(fonts, page_number)
+    page, draw, _y = new_pdf_page(fonts, 1)
 
     if not pdf_items:
         if articles:
@@ -2961,14 +3067,15 @@ def create_briefing_pdf(articles: list[Article]) -> int:
         pages.append(page)
     else:
         pages.append(draw_pdf_summary_page(pdf_items, len(articles), fonts, link_areas))
-        grouped_pdf_items = group_pdf_items_by_category(pdf_items)
-        for category in CATEGORY_ORDER:
-            category_items = grouped_pdf_items[category]
-            if not category_items:
-                continue
-            page_number += 1
-            page_index = len(pages)
-            pages.append(draw_pdf_category_page(category, category_items, fonts, page_number, page_index, link_areas))
+        pages.extend(
+            draw_pdf_category_pages(
+                group_pdf_items_by_category(pdf_items),
+                fonts,
+                first_page_number=2,
+                first_page_index=len(pages),
+                link_areas=link_areas,
+            )
+        )
 
     first_page, *other_pages = pages
     first_page.save(
