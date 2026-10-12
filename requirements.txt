@@ -5,4 +5,6 @@ arabic-reshaper>=3.0.0
 python-bidi>=0.6.0
 beautifulsoup4>=4.12.3
 googlenewsdecoder>=0.1.7
+# googlenewsdecoder still imports selectolax's removed Modest backend; 1.0 breaks it.
+selectolax<1.0
 pypdf>=6.13.0

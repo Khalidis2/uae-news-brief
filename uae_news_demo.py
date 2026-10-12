@@ -7,6 +7,8 @@ import os
 import re
 import shutil
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,10 +20,15 @@ import feedparser
 import requests
 from bs4 import BeautifulSoup
 from bidi.algorithm import get_display
-from googlenewsdecoder import GoogleDecoder
 from PIL import Image, ImageDraw, ImageFont, ImageOps, features
 from pypdf import PdfReader, PdfWriter
 from pypdf.annotations import Link
+
+try:
+    from googlenewsdecoder import GoogleDecoder
+except ImportError as exc:  # a broken optional dependency must not take the whole brief down
+    GoogleDecoder = None
+    print(f"Warning: googlenewsdecoder unavailable ({exc}); Google News links will not be decoded.")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -47,7 +54,7 @@ HERO_IMAGE_HEIGHT = 300
 HERO_TEXT_GAP = 24
 HERO_BOTTOM_GAP = 36
 HERO_LOOKUP_LIMIT = 25
-MAX_PDF_ARTICLES = 24
+MAX_PDF_ARTICLES = 36
 MAX_PDF_ARTICLES_PER_CATEGORY = 4
 PDF_CARD_GAP = 18
 PDF_CARD_PADDING = 22
@@ -76,7 +83,15 @@ BRIEF_MIN_CHARS = 80
 PDF_BRIEF_MAX_LINES = 4
 MAX_HEADLINES_PER_SECTION = 3
 MAX_ENTRIES_PER_FEED = 12
+MAX_ENTRIES_PER_WORLD_FEED = 8
 REQUEST_TIMEOUT_SECONDS = 8
+FETCH_RETRIES = 2
+FETCH_WORKERS = 12
+DETAIL_WORKERS = 8
+DETAIL_CANDIDATE_LIMIT = 100
+# Worldwide coverage is on by default. Set WORLD_NEWS=0 to get the old UAE-only brief.
+WORLD_NEWS_ENABLED = os.environ.get("WORLD_NEWS", "1").strip().lower() not in {"0", "false", "no", "off"}
+MAX_WORLD_ARTICLE_AGE_DAYS = 3
 REQUIRE_ARABIC_HEADLINES = False
 GLOBAL_UAE_COVERAGE = True
 MAX_ARTICLE_AGE_DAYS = 7
@@ -97,6 +112,8 @@ class RssFeed:
     label: str
     url: str
     priority: int
+    scope: str = "uae"  # "uae": keep only UAE-related stories; "world": keep everything newsworthy
+    category: str = ""  # topic hint for world feeds, one of CATEGORY_ORDER
 
 
 @dataclass(frozen=True)
@@ -218,6 +235,114 @@ RSS_FEEDS = [
     global_source_feed("Forbes Middle East", "forbesmiddleeast.com", 5, "en"),
 ]
 
+
+def world_feed(label: str, url: str, category: str, priority: int = 6) -> RssFeed:
+    return RssFeed(label, url, priority, scope="world", category=category)
+
+
+def google_topic_feed(topic: str, category: str, language: str = "en") -> RssFeed:
+    if language == "ar":
+        url = f"https://news.google.com/rss/headlines/section/topic/{topic}?hl=ar&gl=AE&ceid=AE:ar"
+        label = f"Google News {topic} (AR)"
+    else:
+        url = f"https://news.google.com/rss/headlines/section/topic/{topic}?hl=en&gl=US&ceid=US:en"
+        label = f"Google News {topic}"
+    return world_feed(label, url, category, 6)
+
+
+def google_world_source_feed(label: str, domain: str, query: str, category: str, priority: int = 7) -> RssFeed:
+    url = google_news_rss_url(f"site:{domain} {query}", language="en").replace("hl=en-AE&gl=AE&ceid=AE:en", "hl=en&gl=US&ceid=US:en")
+    return world_feed(label, url, category, priority)
+
+
+# Worldwide sources. Direct publisher feeds are preferred because they need no Google redirect
+# decoding; Google News topic and site feeds fill in agencies that no longer publish RSS.
+WORLD_RSS_FEEDS = [
+    world_feed("BBC World", "https://feeds.bbci.co.uk/news/world/rss.xml", "World Affairs", 8),
+    world_feed("BBC Middle East", "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml", "Middle East", 8),
+    world_feed("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml", "Global Business", 7),
+    world_feed("BBC Technology", "https://feeds.bbci.co.uk/news/technology/rss.xml", "Tech & Science", 6),
+    world_feed("BBC Science", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml", "Tech & Science", 6),
+    world_feed("BBC Arabic", "https://feeds.bbci.co.uk/arabic/rss.xml", "World Affairs", 7),
+    world_feed("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml", "Middle East", 7),
+    world_feed("The Guardian World", "https://www.theguardian.com/world/rss", "World Affairs", 7),
+    world_feed("The Guardian Business", "https://www.theguardian.com/business/rss", "Global Business", 6),
+    world_feed("The Guardian Technology", "https://www.theguardian.com/technology/rss", "Tech & Science", 6),
+    world_feed("The Guardian Science", "https://www.theguardian.com/science/rss", "Tech & Science", 6),
+    world_feed("NPR World", "https://feeds.npr.org/1004/rss.xml", "World Affairs", 6),
+    world_feed("DW", "https://rss.dw.com/rdf/rss-en-all", "World Affairs", 6),
+    world_feed("France 24", "https://www.france24.com/en/rss", "World Affairs", 6),
+    world_feed("Sky News World", "https://feeds.skynews.com/feeds/rss/world.xml", "World Affairs", 6),
+    world_feed("ABC News Australia", "https://www.abc.net.au/news/feed/2942460/rss.xml", "World Affairs", 5),
+    world_feed("New York Times World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "World Affairs", 7),
+    world_feed("New York Times Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "Global Business", 6),
+    world_feed("New York Times Technology", "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml", "Tech & Science", 6),
+    world_feed("CNBC World", "https://www.cnbc.com/id/100727362/device/rss/rss.html", "Global Business", 6),
+    world_feed("CNBC Business", "https://www.cnbc.com/id/10001147/device/rss/rss.html", "Global Business", 6),
+    world_feed("Arab News", "https://www.arabnews.com/rss.xml", "Middle East", 5),
+    world_feed("Al Arabiya", "https://www.alarabiya.net/feed/rss2/ar.xml", "Middle East", 6),
+    google_topic_feed("WORLD", "World Affairs"),
+    google_topic_feed("BUSINESS", "Global Business"),
+    google_topic_feed("TECHNOLOGY", "Tech & Science"),
+    google_topic_feed("SCIENCE", "Tech & Science"),
+    google_topic_feed("HEALTH", "Tech & Science"),
+    google_topic_feed("WORLD", "World Affairs", "ar"),
+    google_topic_feed("BUSINESS", "Global Business", "ar"),
+    google_topic_feed("TECHNOLOGY", "Tech & Science", "ar"),
+    google_world_source_feed("Reuters World", "reuters.com", "world", "World Affairs", 8),
+    google_world_source_feed("Reuters Business", "reuters.com", "markets OR economy OR oil", "Global Business", 8),
+    google_world_source_feed("Associated Press", "apnews.com", "world", "World Affairs", 7),
+    google_world_source_feed("Bloomberg", "bloomberg.com", "markets OR economy", "Global Business", 7),
+    google_world_source_feed("Financial Times", "ft.com", "world OR economy", "Global Business", 6),
+]
+
+WORLD_BAD_KEYWORDS = [
+    "رياضة",
+    "كرة القدم",
+    "مشاهير",
+    "ترفيه",
+    "برج",
+    "sport",
+    "sports",
+    "football",
+    "soccer",
+    "cricket",
+    "tennis",
+    "premier league",
+    "nba",
+    "nfl",
+    "celebrity",
+    "entertainment",
+    "horoscope",
+    "box office",
+    "gossip",
+    "royal wedding",
+    "fact check",
+    "quiz",
+    "crossword",
+    "recipe",
+    "newsletter",
+]
+
+WORLD_TOPIC_KEYWORDS = {
+    "Middle East": [
+        "gaza", "israel", "iran", "iraq", "syria", "lebanon", "yemen", "saudi", "qatar", "kuwait", "oman",
+        "bahrain", "egypt", "jordan", "hezbollah", "hamas", "houthi", "red sea", "middle east", "gulf",
+        "غزة", "إسرائيل", "إيران", "العراق", "سوريا", "لبنان", "اليمن", "السعودية", "قطر", "الكويت",
+        "عمان", "البحرين", "مصر", "الأردن", "حزب الله", "حماس", "الحوثي", "الشرق الأوسط", "الخليج",
+    ],
+    "Global Business": [
+        "market", "markets", "stocks", "oil", "opec", "inflation", "economy", "central bank", "interest rate",
+        "tariff", "trade", "bank", "earnings", "gdp", "currency", "bitcoin", "crypto",
+        "الأسواق", "النفط", "أوبك", "التضخم", "اقتصاد", "الفائدة", "تجارة", "بنك", "الأسهم", "الذهب",
+    ],
+    "Tech & Science": [
+        "ai", "artificial intelligence", "chip", "chips", "semiconductor", "software", "cyber", "space", "nasa",
+        "climate", "vaccine", "health", "study", "scientists", "robot", "quantum", "satellite",
+        "ذكاء اصطناعي", "تقنية", "تكنولوجيا", "فضاء", "ناسا", "مناخ", "لقاح", "صحة", "علماء", "دراسة",
+    ],
+}
+
 BAD_KEYWORDS = [
     "رياضة",
     "بطولة",
@@ -331,6 +456,8 @@ IMPORTANT_KEYWORDS = [
     "technology",
 ]
 
+WORLD_CATEGORIES = ["World Affairs", "Middle East", "Global Business", "Tech & Science"]
+
 CATEGORY_ORDER = [
     "Leadership",
     "Government",
@@ -338,6 +465,7 @@ CATEGORY_ORDER = [
     "Economy",
     "Foreign Relations",
     "Other Important UAE News",
+    *WORLD_CATEGORIES,
 ]
 
 CATEGORY_LABELS = {
@@ -347,6 +475,10 @@ CATEGORY_LABELS = {
     "Economy": "الاقتصاد",
     "Foreign Relations": "العلاقات الخارجية",
     "Other Important UAE News": "أخبار إماراتية مهمة",
+    "World Affairs": "أخبار العالم",
+    "Middle East": "الشرق الأوسط",
+    "Global Business": "الاقتصاد العالمي",
+    "Tech & Science": "التقنية والعلوم",
 }
 
 CATEGORY_SUBTITLES = {
@@ -356,6 +488,10 @@ CATEGORY_SUBTITLES = {
     "Economy": "الأعمال والاستثمار والطاقة والتقنية.",
     "Foreign Relations": "الدبلوماسية والشراكات والتحركات الخارجية.",
     "Other Important UAE News": "قصص إماراتية مهمة خارج الأقسام الرئيسية.",
+    "World Affairs": "أبرز الأحداث السياسية والإنسانية حول العالم.",
+    "Middle East": "تطورات المنطقة والملفات الإقليمية.",
+    "Global Business": "الأسواق والطاقة والتجارة العالمية.",
+    "Tech & Science": "الذكاء الاصطناعي والتقنية والعلوم والصحة.",
 }
 
 CATEGORY_KEYWORDS = {
@@ -544,6 +680,10 @@ COLORS = {
     "Economy": (27, 125, 72),
     "Foreign Relations": (77, 95, 166),
     "Other Important UAE News": (94, 103, 115),
+    "World Affairs": (150, 62, 62),
+    "Middle East": (176, 112, 30),
+    "Global Business": (36, 104, 140),
+    "Tech & Science": (112, 72, 160),
 }
 
 ARABIC_CHAR_RE = re.compile(r"[\u0600-\u06FF]")
@@ -776,6 +916,17 @@ def category_for(text: str) -> str:
         if score > best_score:
             best_category = category
             best_score = score
+    return best_category
+
+
+def world_category_for(text: str, feed: RssFeed) -> str:
+    """Pick a world-news section: the feed's topic hint counts as one keyword hit, so two real hits override it."""
+    best_category = feed.category if feed.category in WORLD_CATEGORIES else "World Affairs"
+    best_score = 1
+    for category, keywords in WORLD_TOPIC_KEYWORDS.items():
+        score = sum(1 for keyword in keywords if contains_keyword(text, keyword))
+        if score > best_score:
+            best_category, best_score = category, score
     return best_category
 
 
@@ -1110,6 +1261,8 @@ def decode_google_news_url(session: requests.Session, link: str) -> str:
     if not is_google_news_article_url(link):
         return link
 
+    if GoogleDecoder is None:
+        return ""
     try:
         result = GoogleDecoder().decode_google_news_url(link)
     except Exception:
@@ -1176,75 +1329,126 @@ def find_lead_image(articles: list[Article]) -> tuple[Article, Image.Image] | No
     return None
 
 
-def fetch_feed_entries(feed: RssFeed, session: requests.Session) -> list[object]:
+def fetch_feed_entries(feed: RssFeed, session: requests.Session | None = None) -> list[object] | None:
+    """Return a feed's entries, or None when every attempt failed (so outages are not mistaken for quiet days)."""
+    limit = MAX_ENTRIES_PER_WORLD_FEED if feed.scope == "world" else MAX_ENTRIES_PER_FEED
+    owns_session = session is None
+    session = session or requests.Session()
+    last_error: object = "unknown error"
     try:
-        response = session.get(feed.url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        print(f"Warning: RSS feed failed for {feed.label}: {exc}")
-        return []
+        for attempt in range(FETCH_RETRIES):
+            try:
+                response = session.get(feed.url, headers=REQUEST_HEADERS, timeout=REQUEST_TIMEOUT_SECONDS)
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt + 1 < FETCH_RETRIES:
+                    time.sleep(1 + attempt)
+                continue
 
-    parsed = feedparser.parse(response.content)
-    if getattr(parsed, "bozo", False):
-        print(f"Warning: RSS parse issue for {feed.label}: {getattr(parsed, 'bozo_exception', 'unknown error')}")
-    return list(getattr(parsed, "entries", []))[:MAX_ENTRIES_PER_FEED]
+            parsed = feedparser.parse(response.content)
+            entries = list(getattr(parsed, "entries", []))
+            if not entries and getattr(parsed, "bozo", False):
+                last_error = getattr(parsed, "bozo_exception", "unparseable feed")
+                continue
+            return entries[:limit]
+    finally:
+        if owns_session:
+            session.close()
+
+    print(f"Warning: RSS feed failed for {feed.label}: {last_error}")
+    return None
+
+
+def fetch_all_feeds(feeds: list[RssFeed]) -> list[tuple[RssFeed, list[object] | None]]:
+    """Fetch every feed concurrently; results keep the order of `feeds` so output stays deterministic."""
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+        results = list(pool.map(fetch_feed_entries, feeds))
+    return list(zip(feeds, results))
+
+
+def active_feeds() -> list[RssFeed]:
+    return [*RSS_FEEDS, *WORLD_RSS_FEEDS] if WORLD_NEWS_ENABLED else list(RSS_FEEDS)
 
 
 def collect_articles() -> list[Article]:
     articles: list[Article] = []
     seen_titles: set[str] = set()
     seen_story_token_sets: list[set[str]] = []
+    now = datetime.now(UAE_TIMEZONE)
 
-    with requests.Session() as session:
-        for feed in RSS_FEEDS:
-            for entry in fetch_feed_entries(feed, session):
-                raw_title = clean_text(entry.get("title", "")) if hasattr(entry, "get") else ""
-                if not raw_title:
-                    continue
+    feeds = active_feeds()
+    fetched = fetch_all_feeds(feeds)
+    failed = [feed.label for feed, entries in fetched if entries is None]
+    print(f"المصادر: {len(feeds) - len(failed)} تعمل من أصل {len(feeds)}")
+    if failed:
+        print(f"Warning: {len(failed)} feeds failed: {', '.join(failed[:12])}{' ...' if len(failed) > 12 else ''}")
+    if len(failed) == len(feeds):
+        raise RuntimeError("Every news feed failed - check the network connection before sending a brief.")
 
-                source = source_from_entry(entry, feed.label)
-                title = strip_google_source_suffix(raw_title, source)
-                if REQUIRE_ARABIC_HEADLINES and not has_arabic(title):
-                    continue
-                dedupe_key = normalize_for_dedupe(title)
-                if not dedupe_key or dedupe_key in seen_titles:
-                    continue
-                tokens = story_tokens(title)
-                if is_near_duplicate_story(tokens, seen_story_token_sets):
-                    continue
+    for feed, entries in fetched:
+        is_world_feed = feed.scope == "world"
+        for entry in entries or []:
+            raw_title = clean_text(entry.get("title", "")) if hasattr(entry, "get") else ""
+            if not raw_title:
+                continue
 
-                keyword_text = f"{title} {source}"
-                if not is_uae_related(keyword_text):
+            source = source_from_entry(entry, feed.label)
+            title = strip_google_source_suffix(raw_title, source)
+            if REQUIRE_ARABIC_HEADLINES and not has_arabic(title):
+                continue
+            dedupe_key = normalize_for_dedupe(title)
+            if not dedupe_key or dedupe_key in seen_titles:
+                continue
+            tokens = story_tokens(title)
+            if is_near_duplicate_story(tokens, seen_story_token_sets):
+                continue
+
+            keyword_text = f"{title} {source}"
+            uae_related = is_uae_related(keyword_text)
+            if is_world_feed:
+                if contains_any_keyword(title, WORLD_BAD_KEYWORDS):
+                    continue
+                if uae_related and contains_any_keyword(keyword_text, BAD_KEYWORDS):
+                    continue
+            else:
+                if not uae_related:
                     continue
                 if contains_any_keyword(keyword_text, BAD_KEYWORDS):
                     continue
                 if not GLOBAL_UAE_COVERAGE and not contains_any_keyword(keyword_text, IMPORTANT_KEYWORDS):
                     continue
 
-                published_at = parsed_datetime(entry)
-                if published_at and datetime.now(UAE_TIMEZONE) - published_at > timedelta(days=MAX_ARTICLE_AGE_DAYS):
-                    continue
+            published_at = parsed_datetime(entry)
+            max_age_days = MAX_WORLD_ARTICLE_AGE_DAYS if is_world_feed and not uae_related else MAX_ARTICLE_AGE_DAYS
+            if published_at and now - published_at > timedelta(days=max_age_days):
+                continue
 
+            if is_world_feed and not uae_related:
+                category = world_category_for(keyword_text, feed)
+            else:
                 category = category_for(keyword_text)
-                score = article_score(keyword_text, source, feed, published_at)
-                link = clean_text(entry.get("link", "")) if hasattr(entry, "get") else ""
-                summary = entry.get("summary", "") if hasattr(entry, "get") else ""
+            score = article_score(keyword_text, source, feed, published_at)
+            if is_world_feed and uae_related:
+                score += 6  # a world story that mentions the UAE outranks generic world news
+            link = clean_text(entry.get("link", "")) if hasattr(entry, "get") else ""
+            summary = entry.get("summary", "") if hasattr(entry, "get") else ""
 
-                seen_titles.add(dedupe_key)
-                if tokens:
-                    seen_story_token_sets.append(tokens)
-                articles.append(
-                    Article(
-                        title=title,
-                        source=source,
-                        feed_label=feed.label,
-                        category=category,
-                        score=score,
-                        published_at=published_at,
-                        link=link,
-                        summary=summary,
-                    )
+            seen_titles.add(dedupe_key)
+            if tokens:
+                seen_story_token_sets.append(tokens)
+            articles.append(
+                Article(
+                    title=title,
+                    source=source,
+                    feed_label=feed.label,
+                    category=category,
+                    score=score,
+                    published_at=published_at,
+                    link=link,
+                    summary=summary,
                 )
+            )
 
     articles.sort(
         key=lambda article: (
@@ -2308,22 +2512,30 @@ def balanced_pdf_article_candidates(articles: list[Article]) -> list[Article]:
 def select_pdf_articles_with_images(articles: list[Article]) -> list[PdfArticle]:
     selected: list[PdfArticle] = []
     category_counts = {category: 0 for category in CATEGORY_ORDER}
+    candidates = balanced_pdf_article_candidates(articles)[:DETAIL_CANDIDATE_LIMIT]
 
-    with requests.Session() as session:
-        for article in balanced_pdf_article_candidates(articles):
+    def load_candidate(article: Article) -> tuple[Article, str, str, Image.Image | None]:
+        with requests.Session() as session:
+            publisher_url, image_url, brief = publisher_article_details(session, article)
+            return article, publisher_url, brief, download_image(session, image_url)
+
+    # Publisher pages are slow, so fetch them concurrently; selection below still follows the balanced order.
+    with ThreadPoolExecutor(max_workers=DETAIL_WORKERS) as pool:
+        futures = [pool.submit(load_candidate, article) for article in candidates]
+        for future in futures:
             if len(selected) >= MAX_PDF_ARTICLES:
                 break
+            article, publisher_url, brief, image = future.result()
             if category_counts[article.category] >= MAX_PDF_ARTICLES_PER_CATEGORY:
                 continue
-
-            publisher_url, image_url, brief = publisher_article_details(session, article)
-            image = download_image(session, image_url)
             if not image:
                 continue
 
             selected.append(PdfArticle(article=article, image=image, publisher_url=publisher_url, brief=brief))
             category_counts[article.category] += 1
             print(f"صورة خبر حقيقية: {len(selected)} / {MAX_PDF_ARTICLES}")
+        for future in futures:
+            future.cancel()
 
     return selected
 
@@ -2826,7 +3038,11 @@ def create_briefing_image(articles: list[Article]) -> int:
 
 
 def main() -> None:
-    articles = collect_articles()
+    try:
+        articles = collect_articles()
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
     rendered_count = create_briefing_pdf(articles)
     print(f"العناصر المجمعة: {len(articles)}")
     print(f"العناصر المعروضة: {rendered_count}")
