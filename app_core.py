@@ -49,6 +49,7 @@ def serialize(article: Article) -> dict:
         "link": article.link,
         "image": article.image,
         "summary": summary,
+        "also": [{"source": name, "link": link, "title": title} for name, link, title in article.also],
     }
 
 

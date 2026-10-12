@@ -9,7 +9,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 from functools import partial
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Iterable
 from urllib.parse import quote_plus, urljoin
@@ -82,6 +82,7 @@ class Article:
     region: str = "world"  # "uae", "middle_east" or "world"
     uae_mention: bool = False
     image: str = ""  # image URL taken from the feed entry when it carries one
+    also: tuple[tuple[str, str, str], ...] = ()  # (source, link, title) of the same story from other outlets
 
 
 def google_news_rss_url(query: str, language: str = "ar") -> str:
@@ -699,11 +700,12 @@ def story_tokens(title: str) -> set[str]:
     return {token for token in tokens if len(token) > 2 and token not in DEDUP_STOPWORDS}
 
 
-def is_near_duplicate_story(tokens: set[str], seen_token_sets: list[set[str]]) -> bool:
+def find_near_duplicate(tokens: set[str], seen: list[tuple[set[str], int]]) -> int | None:
+    """Index of the already-kept story that `tokens` repeats, or None."""
     if len(tokens) < 5:
-        return False
+        return None
 
-    for seen_tokens in seen_token_sets:
+    for seen_tokens, index in seen:
         if len(seen_tokens) < 5:
             continue
         intersection = len(tokens & seen_tokens)
@@ -713,9 +715,9 @@ def is_near_duplicate_story(tokens: set[str], seen_token_sets: list[set[str]]) -
         smaller_overlap = intersection / min(len(tokens), len(seen_tokens))
         jaccard = intersection / len(tokens | seen_tokens)
         if smaller_overlap >= 0.82 or jaccard >= 0.72:
-            return True
+            return index
 
-    return False
+    return None
 
 
 def source_from_entry(entry: object, fallback: str) -> str:
@@ -1234,8 +1236,9 @@ def collect_articles(
     deadline: float | None = None,
 ) -> list[Article]:
     articles: list[Article] = []
-    seen_titles: set[str] = set()
-    seen_story_token_sets: list[set[str]] = []
+    key_index: dict[str, int] = {}  # normalized title -> index in `articles`
+    story_sets: list[tuple[set[str], int]] = []
+    also_map: dict[int, list[tuple[str, str, str]]] = {}
     now = datetime.now(UAE_TIMEZONE)
 
     feeds = feeds if feeds is not None else active_feeds()
@@ -1259,10 +1262,18 @@ def collect_articles(
             if REQUIRE_ARABIC_HEADLINES and not has_arabic(title):
                 continue
             dedupe_key = normalize_for_dedupe(title)
-            if not dedupe_key or dedupe_key in seen_titles:
+            if not dedupe_key:
                 continue
+            link = clean_text(entry.get("link", "")) if hasattr(entry, "get") else ""
             tokens = story_tokens(title)
-            if is_near_duplicate_story(tokens, seen_story_token_sets):
+            repeat_of = key_index.get(dedupe_key)
+            if repeat_of is None:
+                repeat_of = find_near_duplicate(tokens, story_sets)
+            if repeat_of is not None:
+                # Same story from another outlet: keep it as extra coverage instead of dropping it silently.
+                coverage = also_map.setdefault(repeat_of, [])
+                if source != articles[repeat_of].source and all(source != name for name, _l, _t in coverage):
+                    coverage.append((source, link, title))
                 continue
 
             keyword_text = f"{title} {source}"
@@ -1292,12 +1303,11 @@ def collect_articles(
             score = article_score(keyword_text, source, feed, published_at)
             if is_world_feed and uae_related:
                 score += 6  # a world story that mentions the UAE outranks generic world news
-            link = clean_text(entry.get("link", "")) if hasattr(entry, "get") else ""
             summary = entry.get("summary", "") if hasattr(entry, "get") else ""
 
-            seen_titles.add(dedupe_key)
+            key_index[dedupe_key] = len(articles)
             if tokens:
-                seen_story_token_sets.append(tokens)
+                story_sets.append((tokens, len(articles)))
             articles.append(
                 Article(
                     title=title,
@@ -1314,6 +1324,11 @@ def collect_articles(
                     image=entry_image_url(entry, link),
                 )
             )
+
+    for index, coverage in also_map.items():
+        article = articles[index]
+        # Stories many outlets carry matter more: +2 per extra outlet, capped.
+        articles[index] = replace(article, also=tuple(coverage[:8]), score=article.score + 2 * min(len(coverage), 6))
 
     articles.sort(
         key=lambda article: (
